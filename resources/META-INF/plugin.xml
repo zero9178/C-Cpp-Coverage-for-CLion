@@ -1,0 +1,51 @@
+<idea-plugin>
+    <id>com.your.company.unique.plugin.id</id>
+    <name>Plugin display name here</name>
+    <version>1.0</version>
+    <vendor email="support@yourcompany.com" url="http://www.yourcompany.com">YourCompany</vendor>
+
+    <description><![CDATA[
+      Enter short description for your plugin here.<br>
+      <em>most HTML tags may be used</em>
+    ]]></description>
+
+    <change-notes><![CDATA[
+      Add change notes here.<br>
+      <em>most HTML tags may be used</em>
+    ]]>
+    </change-notes>
+
+    <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
+    <idea-version since-build="173.0"/>
+
+    <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
+         on how to target different products -->
+    <!-- uncomment to enable plugin in all products
+
+    -->
+
+    <depends>com.intellij.modules.clion</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <actions>
+        <action id="GCov.Action.CoverageRunner" class="GCov.Action.CoverageRunner" text="Coverage"
+                description="Run with GCoverage" icon="CoverageIcons.COVERAGE_RUNNER">
+            <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
+            <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
+        </action>
+    </actions>
+
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="GCoverage" anchor="right" factoryClass="GCov.Window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
+        <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="GCov.LineMarker.CoverageLineMarker"/>
+        <projectService serviceInterface="GCov.State.EditorState" serviceImplementation="GCov.State.EditorState"/>
+        <!-- Add your extensions here -->
+    </extensions>
+
+    <project-components>
+        <component>
+            <implementation-class>GCov.Data.GCovCoverageGatherer</implementation-class>
+        </component>
+    </project-components>
+</idea-plugin>
