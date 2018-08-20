@@ -1,17 +1,16 @@
 <idea-plugin>
-    <id>com.your.company.unique.plugin.id</id>
-    <name>Plugin display name here</name>
-    <version>1.0</version>
-    <vendor email="support@yourcompany.com" url="http://www.yourcompany.com">YourCompany</vendor>
+    <id>com.zero9178</id>
+    <name>GCoverage</name>
+    <version>1.1</version>
+    <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
 
     <description><![CDATA[
-      Enter short description for your plugin here.<br>
-      <em>most HTML tags may be used</em>
+      GCoverage for CLion
     ]]></description>
 
     <change-notes><![CDATA[
-      Add change notes here.<br>
-      <em>most HTML tags may be used</em>
+      1.1:  Fixed bug with Coverage not working during tests. Fixed bug with incorrect File coverage displayed. Added clear button<br/>
+      1.0:  Initial Release</br>
     ]]>
     </change-notes>
 

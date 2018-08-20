@@ -26,6 +26,7 @@ public class GCovWindowFactory implements ToolWindowFactory {
     private CoverageTree m_tree;
     private JScrollPane m_scrollPane;
     private JCheckBox m_showInEditor;
+    private JButton m_clear;
 
     @Override
     public void init(ToolWindow window) {
@@ -38,7 +39,7 @@ public class GCovWindowFactory implements ToolWindowFactory {
         gatherer = GCovCoverageGatherer.getInstance(project);
         project.getMessageBus().connect().subscribe(GCoverageRunEnded.GCOVERAGE_RUN_ENDED_TOPIC,
                 cmakeDirectory -> {
-                    gatherer.setBuildDirectory(project.getBasePath() + "/" + cmakeDirectory + "/CMakeFiles");
+                    gatherer.setBuildDirectory(project.getBasePath() + "/" + cmakeDirectory);
                     try {
                         gatherer.gather();
                     } catch (IOException e) {
@@ -63,6 +64,10 @@ public class GCovWindowFactory implements ToolWindowFactory {
             EditorState.getInstance(project).showInEditor = m_showInEditor.isSelected();
             gatherer.updateEditor();
         });
+        m_clear.addActionListener(e -> {
+            gatherer.clearCoverage();
+            m_tree.resetModel();
+        });
         ContentFactory contentFactory = ContentFactory.SERVICE.getInstance();
         Content content = contentFactory.createContent(m_panel, "", false);
         toolWindow.getContentManager().addContent(content);
@@ -70,5 +75,6 @@ public class GCovWindowFactory implements ToolWindowFactory {
 
     private void createUIComponents() {
         m_tree = new CoverageTree(new DefaultMutableTreeNode("empty-root"));
+        m_tree.getEmptyText().setText("No coverage data found. Did you compile with \"-fprofile-arcs -ftest-coverage\"?");
     }
 }

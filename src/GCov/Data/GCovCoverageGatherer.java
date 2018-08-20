@@ -299,6 +299,32 @@ public class GCovCoverageGatherer implements ProjectComponent {
             }
             parseGCov(lines);
         }
+        for(Path gcda : gcdaFiles) {
+            if(!gcda.toFile().delete()) {
+                log.warn(gcda.toString() + " could not be deleted");
+            }
+        }
+    }
+
+    public void clearCoverage() {
+        List<String> files = new ArrayList<>(m_data.keySet());
+        m_data.clear();
+        for(String file : files) {
+            if(m_project.getBasePath() == null || !file.startsWith(m_project.getBasePath()))
+            {
+                continue;
+            }
+            VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(Paths.get(file).toFile());
+            if(virtualFile == null) {
+                continue;
+            }
+
+            PsiFile psiFile = PsiManager.getInstance(m_project).findFile(virtualFile);
+            if(psiFile == null) {
+                continue;
+            }
+            DaemonCodeAnalyzer.getInstance(m_project).restart(psiFile);
+        }
     }
 
     public void updateEditor() {
@@ -340,7 +366,6 @@ public class GCovCoverageGatherer implements ProjectComponent {
 
         tree.setModel(new ListTreeTableModelOnColumns(root,CoverageTree.getColumnInfo()));
         tree.setRootVisible(false);
-        tree.getEmptyText().setText("No coverage data found. Did you compile with \"-fprofile-arcs -ftest-coverage\"?");
         updateEditor();
     }
 }

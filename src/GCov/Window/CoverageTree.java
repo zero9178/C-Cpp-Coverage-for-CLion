@@ -48,6 +48,9 @@ public class CoverageTree extends TreeTableView {
                             int lineCount = 0;
                             int coveredLineCount = 0;
                             for (Map.Entry<String, GCovCoverageGatherer.CoverageFunctionData> entry : file.getData().entrySet()) {
+                                if(entry.getValue().getLines().isEmpty()) {
+                                    continue;
+                                }
                                 coveredLineCount += entry.getValue().getCoverage();
                                 lineCount += entry.getValue().getLines().size();
                                 coverage += entry.getValue().getCoverage() / (double) entry.getValue().getLines().size();
@@ -58,9 +61,9 @@ public class CoverageTree extends TreeTableView {
                             bar.setMinimum(0);
                             GCovCoverageGatherer.CoverageFunctionData functionData =
                                     (GCovCoverageGatherer.CoverageFunctionData) node.getUserObject();
-                            bar.setMaximum(functionData.getLines().size());
+                            bar.setMaximum(functionData.getLines().isEmpty() ? 1 : functionData.getLines().size());
                             bar.setValue(functionData.getCoverage());
-                            bar.setToolTipText(String.valueOf(bar.getValue()) + "/" + String.valueOf(bar.getMaximum()) + " covered");
+                            bar.setToolTipText(String.valueOf(bar.getValue()) + "/" + String.valueOf(functionData.getLines().size()) + " covered");
                         }
                         return bar;
                     }
@@ -78,6 +81,11 @@ public class CoverageTree extends TreeTableView {
         super(new ListTreeTableModelOnColumns(root, getColumnInfo()));
     }
 
+    void resetModel() {
+        setModel(new ListTreeTableModelOnColumns(new DefaultMutableTreeNode("empty-root"),getColumnInfo()));
+        setRootVisible(false);
+    }
+
     public static class TreeMouseHandler implements MouseListener {
 
         private Project m_project;
@@ -90,6 +98,11 @@ public class CoverageTree extends TreeTableView {
 
         @Override
         public void mouseClicked(MouseEvent e) {
+            if(m_project.isDisposed()) {
+                m_tree.removeMouseListener(this);
+                return;
+            }
+
             if (e.getClickCount() != 2) {
                 return;
             }

@@ -42,6 +42,23 @@
               <text value="Show in Editor"/>
             </properties>
           </component>
+          <component id="960a1" class="javax.swing.JButton" binding="m_clear">
+            <constraints/>
+            <properties>
+              <hideActionText value="true"/>
+              <horizontalAlignment value="0"/>
+              <icon value="icons/gc.png"/>
+              <maximumSize width="30" height="30"/>
+              <minimumSize width="30" height="30"/>
+              <preferredSize width="30" height="30"/>
+              <selected value="false"/>
+              <text value=""/>
+              <toolTipText value="Clear coverage"/>
+            </properties>
+          </component>
+          <hspacer id="402bb">
+            <constraints/>
+          </hspacer>
         </children>
       </toolbar>
       <scrollpane id="c5143" binding="m_scrollPane">

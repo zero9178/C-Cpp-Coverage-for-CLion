@@ -8,17 +8,34 @@ import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.components.ComponentManager;
 import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.HashSet;
+import java.util.Set;
 
 public class CoverageRunner extends AnAction {
 
     static class ProcessEndHandler implements ExecutionListener {
 
         private long m_executionID;
+        private Set<Project> m_connected = new HashSet<>();
 
-        ProcessEndHandler(long executionID) {
+        void setExecutionID(long executionID) {
             m_executionID = executionID;
+        }
+
+        private void disposeProjects() {
+            m_connected.removeIf(ComponentManager::isDisposed);
+        }
+
+        void connect(@NotNull Project project) {
+            if (!m_connected.contains(project)) {
+                project.getMessageBus().connect().subscribe(ExecutionManager.EXECUTION_TOPIC, this);
+                m_connected.add(project);
+            }
+            disposeProjects();
         }
 
         @Override
@@ -31,6 +48,8 @@ public class CoverageRunner extends AnAction {
             publisher.ended("cmake-build-" + target.toLowerCase());
         }
     }
+
+    static private final ProcessEndHandler m_handler = new ProcessEndHandler();
 
     @Override
     public void update(AnActionEvent e) {
@@ -68,8 +87,11 @@ public class CoverageRunner extends AnAction {
         }
         ProgramRunnerUtil.executeConfigurationAsync(envBuilder.contentToReuse(null).dataContext(null).activeTarget().build(),
                 true, true,
-                runContentDescriptor -> project.getMessageBus().connect().subscribe(ExecutionManager.EXECUTION_TOPIC,
-                        new ProcessEndHandler(runContentDescriptor.getExecutionId())));
+                runContentDescriptor -> {
+                    m_handler.connect(project);
+                    m_handler.setExecutionID(runContentDescriptor.getExecutionId()
+                            + (runContentDescriptor.getHelpId().equals("reference.runToolWindow.testResultsTab") ? 0 : 0));
+                });
 
     }
 }
