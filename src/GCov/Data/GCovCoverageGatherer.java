@@ -1,5 +1,7 @@
 package GCov.Data;
 
+import GCov.Notification.GCovNotification;
+import GCov.State.ShowNonProjectSourcesState;
 import GCov.Window.CoverageTree;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.codeInsight.daemon.RelatedItemLineMarkerProvider;
@@ -11,10 +13,8 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
 import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns;
-import com.intellij.util.FileContentUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import sun.misc.GC;
 
 import javax.swing.tree.DefaultMutableTreeNode;
 import java.io.File;
@@ -43,14 +43,16 @@ public class GCovCoverageGatherer implements ProjectComponent {
         m_data = new TreeMap<>();
     }
 
-    public static class CoverageFileData {
+    public class CoverageFileData {
 
+        private boolean m_projectSource = false;
         private String m_filePath;
         private Map<String, CoverageFunctionData> m_data = new TreeMap<>();
         private Map<Integer,CoverageLineData> m_lineDataMap = new HashMap<>();
 
-        CoverageFileData(String filePath) {
+        CoverageFileData(String filePath,boolean projectSource) {
             m_filePath = filePath;
+            m_projectSource = projectSource;
         }
 
         void emplaceFunction(int startLine, int endLine, int executionCount, String functionName) {
@@ -88,6 +90,14 @@ public class GCovCoverageGatherer implements ProjectComponent {
 
         @Override
         public String toString() {
+            if(m_projectSource && !ShowNonProjectSourcesState.getInstance(m_project).showNonProjectSources && m_project.getBasePath() != null) {
+                return m_filePath.substring(1+m_project.getBasePath().length());
+            } else {
+                return m_filePath;
+            }
+        }
+
+        public String getFilePath() {
             return m_filePath;
         }
 
@@ -219,16 +229,23 @@ public class GCovCoverageGatherer implements ProjectComponent {
             } else {
                 nullFile = "/dev/zero";
             }
-            Process p = new ProcessBuilder("gcov", "-i", "-m", "-b", gcda.toString())
+            ProcessBuilder builder = new ProcessBuilder("gcov", "-i", "-m", "-b", gcda.toString())
                     .directory(gcda.toFile().getParentFile())
-                    .redirectOutput(new File(nullFile)).redirectErrorStream(true).start();
+                    .redirectOutput(new File(nullFile)).redirectErrorStream(true);
+            Process p = builder.start();
             try {
                 retCode = p.waitFor();
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO.createNotification("Process timed out", NotificationType.ERROR);
+                Notifications.Bus.notify(notification,m_project);
+            }
+            if (retCode != 0) {
+                String command = String.join(" ",builder.command());
+                log.warn("gcov finished with error code " + String.valueOf(retCode) + " using following arguments\n" + command);
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO.createNotification("\"gcov\" was not found in system path", NotificationType.ERROR);
+            Notifications.Bus.notify(notification,m_project);
         }
         return retCode == 0;
     }
@@ -240,7 +257,8 @@ public class GCovCoverageGatherer implements ProjectComponent {
                 case "file": {
                     currentFile = m_data.get(line.substring(line.indexOf(':') + 1));
                     if (currentFile == null) {
-                        currentFile = new CoverageFileData(line.substring(line.indexOf(':') + 1));
+                        currentFile = new CoverageFileData(line.substring(line.indexOf(':') + 1),
+                                m_project.getBasePath() != null && line.substring(line.indexOf(':') + 1).startsWith(m_project.getBasePath()));
                         m_data.put(line.substring(line.indexOf(':') + 1), currentFile);
                     }
                 }
@@ -279,31 +297,59 @@ public class GCovCoverageGatherer implements ProjectComponent {
         }
     }
 
-    public void gather() throws IOException {
-        m_data.clear();
-        List<Path> gcdaFiles = new ArrayList<>();
-        Files.find(Paths.get(m_buildDirectory), Integer.MAX_VALUE,
-                ((path, basicFileAttributes) -> basicFileAttributes.isRegularFile() && path.toString().endsWith("gcda")))
-                .forEach(gcdaFiles::add);
-        for (Path gcda : gcdaFiles) {
-            if (!generateGCDA(gcda) || !Paths.get(gcda.toString() + ".gcov").toFile().exists()) {
-                continue;
+    private class GatherRunner extends Thread {
+
+        Runnable m_runner;
+
+        GatherRunner(@Nullable Runnable runner) {
+            m_runner = runner;
+        }
+
+        @Override
+        public void run() {
+            m_data.clear();
+            List<Path> gcdaFiles = new ArrayList<>();
+            try {
+                Files.find(Paths.get(m_buildDirectory), Integer.MAX_VALUE,
+                        ((path, basicFileAttributes) -> basicFileAttributes.isRegularFile() && path.toString().endsWith("gcda")))
+                        .forEach(gcdaFiles::add);
+            } catch (IOException e) {
+                e.printStackTrace();
             }
 
-            List<String> lines = new ArrayList<>();
-            try (Stream<String> stream = Files.lines(Paths.get(gcda.toString() + ".gcov"))) {
-                stream.forEach(lines::add);
+            for (Path gcda : gcdaFiles) {
+                if (!generateGCDA(gcda) || !Paths.get(gcda.toString() + ".gcov").toFile().exists()) {
+                    continue;
+                }
+
+                List<String> lines = new ArrayList<>();
+                try (Stream<String> stream = Files.lines(Paths.get(gcda.toString() + ".gcov"))) {
+                    stream.forEach(lines::add);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
+                if (!Paths.get(gcda.toString() + ".gcov").toFile().delete() || lines.isEmpty()) {
+                    continue;
+                }
+                parseGCov(lines);
             }
-            if (!Paths.get(gcda.toString() + ".gcov").toFile().delete() || lines.isEmpty()) {
-                continue;
+
+            for(Path gcda : gcdaFiles) {
+                if(!gcda.toFile().delete()) {
+                    log.warn(gcda.toString() + " could not be deleted");
+                }
             }
-            parseGCov(lines);
+
+            if(m_runner != null) {
+                ApplicationManager.getApplication().invokeLater(() -> m_runner.run());
+            }
         }
-        for(Path gcda : gcdaFiles) {
-            if(!gcda.toFile().delete()) {
-                log.warn(gcda.toString() + " could not be deleted");
-            }
-        }
+    }
+
+    public void gather(@Nullable Runnable runnable){
+        GatherRunner gatherer = new GatherRunner(runnable);
+        gatherer.start();
     }
 
     public void clearCoverage() {
@@ -345,14 +391,15 @@ public class GCovCoverageGatherer implements ProjectComponent {
         }
     }
 
-    public void display(CoverageTree tree, boolean nonProjectSources) {
+    public void display(CoverageTree tree) {
         if (m_data.isEmpty()) {
+            tree.getEmptyText().setText("No coverage data found. Did you compile with \"--coverage\"?");
             return;
         }
 
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("invisibile-root");
         for(Map.Entry<String,CoverageFileData> entry : m_data.entrySet()) {
-            if(!nonProjectSources && (m_project.getBasePath() == null || !entry.getKey().startsWith(m_project.getBasePath()))) {
+            if(!ShowNonProjectSourcesState.getInstance(m_project).showNonProjectSources && (m_project.getBasePath() == null || !entry.getKey().startsWith(m_project.getBasePath()))) {
                 continue;
             }
 

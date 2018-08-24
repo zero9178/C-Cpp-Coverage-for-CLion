@@ -84,6 +84,7 @@ public class CoverageTree extends TreeTableView {
     void resetModel() {
         setModel(new ListTreeTableModelOnColumns(new DefaultMutableTreeNode("empty-root"),getColumnInfo()));
         setRootVisible(false);
+        getEmptyText().setText("Nothing to show");
     }
 
     public static class TreeMouseHandler implements MouseListener {
@@ -115,7 +116,7 @@ public class CoverageTree extends TreeTableView {
             Object data = ((DefaultMutableTreeNode) m_tree.getValueAt(selRow, selColumn)).getUserObject();
 
             if (data instanceof GCovCoverageGatherer.CoverageFileData) {
-                VirtualFile file = VfsUtil.findFileByIoFile(new File(data.toString()), true);
+                VirtualFile file = VfsUtil.findFileByIoFile(new File(((GCovCoverageGatherer.CoverageFileData) data).getFilePath()), true);
                 if (file == null || file.getFileType().isBinary()) {
                     return;
                 }
@@ -123,7 +124,7 @@ public class CoverageTree extends TreeTableView {
                 FileEditorManager.getInstance(m_project).openEditor(new OpenFileDescriptor(m_project, file), true);
             } else if (data instanceof GCovCoverageGatherer.CoverageFunctionData) {
                 GCovCoverageGatherer.CoverageFunctionData functionData = (GCovCoverageGatherer.CoverageFunctionData) data;
-                VirtualFile file = VfsUtil.findFileByIoFile(new File(functionData.getFileData().toString()), true);//TODO
+                VirtualFile file = VfsUtil.findFileByIoFile(new File(functionData.getFileData().getFilePath()), true);
                 if (file == null || file.getFileType().isBinary()) {
                     return;
                 }

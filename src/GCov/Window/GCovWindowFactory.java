@@ -3,6 +3,7 @@ package GCov.Window;
 import GCov.Data.GCovCoverageGatherer;
 import GCov.Messaging.GCoverageRunEnded;
 import GCov.State.EditorState;
+import GCov.State.ShowNonProjectSourcesState;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
@@ -13,7 +14,6 @@ import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
-import java.io.IOException;
 
 public class GCovWindowFactory implements ToolWindowFactory {
 
@@ -39,15 +39,11 @@ public class GCovWindowFactory implements ToolWindowFactory {
         gatherer = GCovCoverageGatherer.getInstance(project);
         project.getMessageBus().connect().subscribe(GCoverageRunEnded.GCOVERAGE_RUN_ENDED_TOPIC,
                 cmakeDirectory -> {
+                    m_tree.resetModel();
+                    m_tree.getEmptyText().setText("Gathering coverage data...");
                     gatherer.setBuildDirectory(project.getBasePath() + "/" + cmakeDirectory);
-                    try {
-                        gatherer.gather();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        return;
-                    }
+                    gatherer.gather(() -> gatherer.display(m_tree));
                     ApplicationManager.getApplication().invokeLater(() -> {
-                        gatherer.display(m_tree, m_showNonProjectSources.isSelected());
                         m_toolWindow.setAvailable(true,null);
                         m_toolWindow.show(null);
                     });
@@ -58,7 +54,10 @@ public class GCovWindowFactory implements ToolWindowFactory {
     @Override
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
         m_tree.addMouseListener(new CoverageTree.TreeMouseHandler(project,m_tree));
-        m_showNonProjectSources.addItemListener(e -> gatherer.display(m_tree, m_showNonProjectSources.isSelected()));
+        m_showNonProjectSources.addItemListener(e -> {
+            ShowNonProjectSourcesState.getInstance(project).showNonProjectSources = m_showNonProjectSources.isSelected();
+            gatherer.display(m_tree);
+        });
         m_showInEditor.setSelected(EditorState.getInstance(project).showInEditor);
         m_showInEditor.addItemListener(e -> {
             EditorState.getInstance(project).showInEditor = m_showInEditor.isSelected();
