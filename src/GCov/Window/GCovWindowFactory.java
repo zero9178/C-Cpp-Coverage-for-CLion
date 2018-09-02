@@ -15,6 +15,9 @@ import org.jetbrains.annotations.NotNull;
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
 
+/**
+ * Tool window that is opened to display coverage information
+ */
 public class GCovWindowFactory implements ToolWindowFactory {
 
     static private GCovCoverageGatherer gatherer;
@@ -28,12 +31,23 @@ public class GCovWindowFactory implements ToolWindowFactory {
     private JCheckBox m_showInEditor;
     private JButton m_clear;
 
+    /**
+     * Called at the start of the IDE to initialize the window
+     *
+     * @param window ToolWindow
+     */
     @Override
     public void init(ToolWindow window) {
         m_toolWindow = window;
         window.setAvailable(false,null);
     }
 
+    /**
+     * Called  whenever a new project is opened to check visibility
+     *
+     * @param project New project that was opened
+     * @return true if the window should be able to be manually opened and closed at the start of the project
+     */
     @Override
     public boolean shouldBeAvailable(@NotNull Project project) {
         gatherer = GCovCoverageGatherer.getInstance(project);
@@ -51,6 +65,12 @@ public class GCovWindowFactory implements ToolWindowFactory {
         return false;
     }
 
+    /**
+     * Called when the window is being opened to initialize the GUI
+     *
+     * @param project Project in which the window is being opened
+     * @param toolWindow Tool window in which it should appear
+     */
     @Override
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
         m_tree.addMouseListener(new CoverageTree.TreeMouseHandler(project,m_tree));
@@ -74,6 +94,6 @@ public class GCovWindowFactory implements ToolWindowFactory {
 
     private void createUIComponents() {
         m_tree = new CoverageTree(new DefaultMutableTreeNode("empty-root"));
-        m_tree.getEmptyText().setText("No coverage data found. Did you compile with \"-fprofile-arcs -ftest-coverage\"?");
+        m_tree.getEmptyText().setText("Gathering coverage data...");
     }
 }

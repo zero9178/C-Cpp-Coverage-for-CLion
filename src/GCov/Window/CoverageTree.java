@@ -23,7 +23,9 @@ import java.awt.event.MouseListener;
 import java.io.File;
 import java.util.Map;
 
-
+/**
+ * Class acting as the model for the treeTable inside the GCovWindowFactory tool window
+ */
 public class CoverageTree extends TreeTableView {
 
     @NotNull
@@ -81,12 +83,18 @@ public class CoverageTree extends TreeTableView {
         super(new ListTreeTableModelOnColumns(root, getColumnInfo()));
     }
 
+    /**
+     * Resets the model to an empty state
+     */
     void resetModel() {
         setModel(new ListTreeTableModelOnColumns(new DefaultMutableTreeNode("empty-root"),getColumnInfo()));
         setRootVisible(false);
         getEmptyText().setText("Nothing to show");
     }
 
+    /**
+     * Handles mouse input to jump to functions and files
+     */
     public static class TreeMouseHandler implements MouseListener {
 
         private Project m_project;
@@ -155,6 +163,5 @@ public class CoverageTree extends TreeTableView {
 
         }
     }
-
 
 }

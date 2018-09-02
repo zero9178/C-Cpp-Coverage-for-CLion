@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.zero9178</id>
     <name>GCoverage</name>
-    <version>1.1</version>
+    <version>1.1.1</version>
     <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
 
     <description><![CDATA[
@@ -9,6 +9,7 @@
     ]]></description>
 
     <change-notes><![CDATA[
+      1.1.1:Fixed bug with Coverage not running after normal application exit. Filepaths are now relative to project root if only showing project sources<br/>
       1.1:  Fixed bug with Coverage not working during tests. Fixed bug with incorrect File coverage displayed. Added clear button<br/>
       1.0:  Initial Release</br>
     ]]>
@@ -39,6 +40,7 @@
         <toolWindow id="GCoverage" anchor="right" factoryClass="GCov.Window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
         <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="GCov.LineMarker.CoverageLineMarker"/>
         <projectService serviceInterface="GCov.State.EditorState" serviceImplementation="GCov.State.EditorState"/>
+        <projectService serviceInterface="GCov.State.ShowNonProjectSourcesState" serviceImplementation="GCov.State.ShowNonProjectSourcesState"/>
         <!-- Add your extensions here -->
     </extensions>
 
