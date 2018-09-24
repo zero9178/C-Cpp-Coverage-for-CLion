@@ -46,7 +46,7 @@ public class CoverageLineMarker implements LineMarkerProvider {
             }
 
             return new LineMarkerInfo<>(psiElement, new TextRange(textOffset, textOffset), lineData.isCovered() ? CoverageIcons.LINE_COVERED : CoverageIcons.LINE_NOT_COVERED,
-                    0, element -> "Executed "  + String.valueOf(lineData.getExecutionCount()) + " times", null, GutterIconRenderer.Alignment.LEFT);
+                    0, element -> "Executed "  + lineData.getExecutionCount() + " times", null, GutterIconRenderer.Alignment.LEFT);
         }
         return null;
     }

@@ -58,14 +58,14 @@ public class CoverageTree extends TreeTableView {
                                 coverage += entry.getValue().getCoverage() / (double) entry.getValue().getLines().size();
                             }
                             bar.setValue((int) (100 * coverage / file.getData().size()));
-                            bar.setToolTipText(String.valueOf(coveredLineCount) + "/" + String.valueOf(lineCount) + " covered");
+                            bar.setToolTipText(coveredLineCount + "/" + lineCount + " covered");
                         } else if (node.getUserObject() instanceof GCovCoverageGatherer.CoverageFunctionData) {
                             bar.setMinimum(0);
                             GCovCoverageGatherer.CoverageFunctionData functionData =
                                     (GCovCoverageGatherer.CoverageFunctionData) node.getUserObject();
                             bar.setMaximum(functionData.getLines().isEmpty() ? 1 : functionData.getLines().size());
                             bar.setValue(functionData.getCoverage());
-                            bar.setToolTipText(String.valueOf(bar.getValue()) + "/" + String.valueOf(functionData.getLines().size()) + " covered");
+                            bar.setToolTipText(bar.getValue() + "/" + functionData.getLines().size() + " covered");
                         }
                         return bar;
                     }
@@ -97,8 +97,8 @@ public class CoverageTree extends TreeTableView {
      */
     public static class TreeMouseHandler implements MouseListener {
 
-        private Project m_project;
-        private TreeTable m_tree;
+        private final Project m_project;
+        private final TreeTable m_tree;
 
         TreeMouseHandler(Project project, TreeTable tree) {
             m_project = project;

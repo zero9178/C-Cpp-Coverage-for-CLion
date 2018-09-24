@@ -11,8 +11,6 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.components.ComponentManager;
 import com.intellij.openapi.project.Project;
 import com.jetbrains.cidr.cpp.cmake.CMakeSettings;
-import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration;
-import com.jetbrains.cidr.execution.BuildTargetAndConfigurationData;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashSet;
@@ -34,7 +32,7 @@ public class CoverageRunner extends AnAction {
     static class ProcessEndHandler implements ExecutionListener {
 
         private long m_executionID;
-        private Set<Project> m_connected = new HashSet<>();
+        private final Set<Project> m_connected = new HashSet<>();
 
         /**
          * Sets the executionID of the process to listen to
@@ -112,7 +110,7 @@ public class CoverageRunner extends AnAction {
      * @param e Event sent by intellij
      */
     @Override
-    public void update(AnActionEvent e) {
+    public void update(@NotNull AnActionEvent e) {
         Project project = e.getProject();
         if (project == null) {
             e.getPresentation().setEnabled(false);
@@ -135,7 +133,7 @@ public class CoverageRunner extends AnAction {
      * @param anActionEvent Event sent by intellij
      */
     @Override
-    public void actionPerformed(AnActionEvent anActionEvent) {
+    public void actionPerformed(@NotNull AnActionEvent anActionEvent) {
         Executor defaultExecutor = DefaultRunExecutor.getRunExecutorInstance();
         Project project = anActionEvent.getProject();
         if (project == null) {

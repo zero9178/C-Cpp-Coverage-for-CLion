@@ -33,25 +33,25 @@ public class GCovCoverageGatherer implements ProjectComponent {
 
     private static final Logger log = Logger.getInstance(GCovCoverageGatherer.class);
 
-    private Project m_project;
+    private final Project m_project;
     private String m_buildDirectory;
-    private Map<String, CoverageFileData> m_data;
+    private final Map<String, CoverageFileData> m_data;
 
     public static GCovCoverageGatherer getInstance(@NotNull Project project) {
         return project.getComponent(GCovCoverageGatherer.class);
     }
 
-    public GCovCoverageGatherer(Project project) {
+    private GCovCoverageGatherer(Project project) {
         m_project = project;
         m_data = new TreeMap<>();
     }
 
     public class CoverageFileData {
 
-        private boolean m_projectSource = false;
-        private String m_filePath;
-        private Map<String, CoverageFunctionData> m_data = new TreeMap<>();
-        private Map<Integer,CoverageLineData> m_lineDataMap = new HashMap<>();
+        private boolean m_projectSource;
+        private final String m_filePath;
+        private final Map<String, CoverageFunctionData> m_data = new TreeMap<>();
+        private final Map<Integer,CoverageLineData> m_lineDataMap = new HashMap<>();
 
         CoverageFileData(String filePath,boolean projectSource) {
             m_filePath = filePath;
@@ -112,11 +112,11 @@ public class GCovCoverageGatherer implements ProjectComponent {
 
     public static class CoverageFunctionData {
 
-        private Map<Integer, CoverageLineData> m_lines = new TreeMap<>();
-        private int m_startLine;
-        private int m_endLine;
+        private final Map<Integer, CoverageLineData> m_lines = new TreeMap<>();
+        private final int m_startLine;
+        private final int m_endLine;
         private int m_executionCount;
-        private String m_functionName;
+        private final String m_functionName;
         private CoverageFileData m_fileData;
 
         public CoverageFileData getFileData() {
@@ -189,7 +189,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
     }
 
     public static class CoverageLineData {
-        private int m_lineNumber;
+        private final int m_lineNumber;
         private int m_executionCount;
 
         CoverageLineData(int lineNumber, int executionCount, boolean unexecutedBlock) {
@@ -244,7 +244,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
             }
             if (retCode != 0) {
                 String command = String.join(" ",builder.command());
-                log.warn("gcov finished with error code " + String.valueOf(retCode) + " using following arguments\n" + command);
+                log.warn("gcov finished with error code " + retCode + " using following arguments\n" + command);
             }
         } catch (IOException e) {
             Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO.createNotification("\"gcov\" was not found in system path", NotificationType.ERROR);
@@ -256,19 +256,20 @@ public class GCovCoverageGatherer implements ProjectComponent {
     private void parseGCov(@NotNull List<String> lines) {
         CoverageFileData currentFile = null;
         for (String line : lines) {
+            String substring = line.substring(line.indexOf(':') + 1);
             switch (line.substring(0, line.indexOf(':'))) {
                 case "file": {
-                    currentFile = m_data.get(line.substring(line.indexOf(':') + 1));
+                    currentFile = m_data.get(substring);
                     if (currentFile == null) {
-                        currentFile = new CoverageFileData(line.substring(line.indexOf(':') + 1),
-                                m_project.getBasePath() != null && line.substring(line.indexOf(':') + 1).startsWith(m_project.getBasePath()));
-                        m_data.put(line.substring(line.indexOf(':') + 1), currentFile);
+                        currentFile = new CoverageFileData(substring,
+                                m_project.getBasePath() != null && substring.startsWith(m_project.getBasePath()));
+                        m_data.put(substring, currentFile);
                     }
                 }
                 break;
                 case "function": {
                     log.assertTrue(currentFile != null, "\"function\" statement found before a file statement");
-                    String data = line.substring(line.indexOf(':') + 1);
+                    String data = substring;
                     int startLine = Integer.parseInt(data.substring(0, data.indexOf(',')));
                     data = data.substring(data.indexOf(',') + 1);
                     int endLine = Integer.parseInt(data.substring(0, data.indexOf(',')));
@@ -280,7 +281,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
                 break;
                 case "lcount": {
                     log.assertTrue(currentFile != null, "\"lcount\" statement found before a file statement");
-                    String data = line.substring(line.indexOf(':') + 1);
+                    String data = substring;
                     int lineNumber = Integer.parseInt(data.substring(0, data.indexOf(',')));
                     data = data.substring(data.indexOf(',') + 1);
                     int executionCount = Integer.parseInt(data.substring(0, data.indexOf(',')));
@@ -302,7 +303,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
 
     private class GatherRunner extends Thread {
 
-        Runnable m_runner;
+        final Runnable m_runner;
 
         GatherRunner(@Nullable Runnable runner) {
             m_runner = runner;
@@ -345,7 +346,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
             }
 
             if(m_runner != null) {
-                ApplicationManager.getApplication().invokeLater(() -> m_runner.run());
+                ApplicationManager.getApplication().invokeLater(m_runner::run);
             }
         }
     }
@@ -353,6 +354,19 @@ public class GCovCoverageGatherer implements ProjectComponent {
     public void gather(@Nullable Runnable runnable){
         GatherRunner gatherer = new GatherRunner(runnable);
         gatherer.start();
+    }
+
+    private void restartDaemonForFile(String file) {
+        VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(Paths.get(file).toFile());
+        if(virtualFile == null) {
+            return;
+        }
+
+        PsiFile psiFile = PsiManager.getInstance(m_project).findFile(virtualFile);
+        if(psiFile == null) {
+            return;
+        }
+        DaemonCodeAnalyzer.getInstance(m_project).restart(psiFile);
     }
 
     public void clearCoverage() {
@@ -363,16 +377,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
             {
                 continue;
             }
-            VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(Paths.get(file).toFile());
-            if(virtualFile == null) {
-                continue;
-            }
-
-            PsiFile psiFile = PsiManager.getInstance(m_project).findFile(virtualFile);
-            if(psiFile == null) {
-                continue;
-            }
-            DaemonCodeAnalyzer.getInstance(m_project).restart(psiFile);
+            restartDaemonForFile(file);
         }
     }
 
@@ -382,15 +387,7 @@ public class GCovCoverageGatherer implements ProjectComponent {
             {
                 continue;
             }
-            VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(Paths.get(entry.getKey()).toFile());
-            if(virtualFile == null) {
-                continue;
-            }
-            PsiFile file = PsiManager.getInstance(m_project).findFile(virtualFile);
-            if(file == null) {
-                continue;
-            }
-            DaemonCodeAnalyzer.getInstance(m_project).restart(file);
+            restartDaemonForFile(entry.getKey());
         }
     }
 
