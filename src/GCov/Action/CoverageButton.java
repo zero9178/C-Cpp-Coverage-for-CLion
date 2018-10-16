@@ -1,11 +1,15 @@
 package GCov.Action;
 
-import GCov.Messaging.GCoverageRunEnded;
+import GCov.Messaging.CoverageProcessEnded;
+import GCov.Notification.GCovNotification;
 import com.intellij.execution.*;
 import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
+import com.intellij.notification.Notification;
+import com.intellij.notification.NotificationType;
+import com.intellij.notification.Notifications;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.components.ComponentManager;
@@ -13,6 +17,9 @@ import com.intellij.openapi.project.Project;
 import com.jetbrains.cidr.cpp.cmake.CMakeSettings;
 import org.jetbrains.annotations.NotNull;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -21,13 +28,13 @@ import java.util.Set;
  *
  * Class representing the option in the run menu as well as the button in the top right for running coverage
  */
-public class CoverageRunner extends AnAction {
+public class CoverageButton extends AnAction {
 
     /**
      * Class handling termination events
      *
      * Checks that connections to projects and processes in projects are unique and working.
-     * Sends a GCoverageRunEnded event on the project bus upon termination
+     * Sends a CoverageProcessEnded event on the project bus upon termination
      */
     static class ProcessEndHandler implements ExecutionListener {
 
@@ -66,7 +73,7 @@ public class CoverageRunner extends AnAction {
         /**
          * Called when a process terminates
          *
-         * Checks if the process that terminated has the same executionId as this and publishes a GCoverageRunEnded event
+         * Checks if the process that terminated has the same executionId as this and publishes a CoverageProcessEnded event
          * if it does
          * @param executorId executorID not to be confused with executionId
          * @param env Environment
@@ -75,7 +82,7 @@ public class CoverageRunner extends AnAction {
          */
         @Override
         public void processTerminated(@NotNull String executorId, @NotNull ExecutionEnvironment env, @NotNull ProcessHandler handler, int exitCode) {
-            if (env.getExecutionId() != m_executionID || exitCode != 0) {
+            if (env.getExecutionId() != m_executionID) {
                 return;
             }
             String target = env.getExecutionTarget().getDisplayName();
@@ -91,10 +98,19 @@ public class CoverageRunner extends AnAction {
                     break;
                 }
             }
+
             if (buildDirectory == null) {
+                Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+                        .createNotification("Error getting build directory for cmake profile " + target, NotificationType.ERROR);
+                Notifications.Bus.notify(notification,env.getProject());
                 return;
             }
-            GCoverageRunEnded publisher = env.getProject().getMessageBus().syncPublisher(GCoverageRunEnded.GCOVERAGE_RUN_ENDED_TOPIC);
+
+            if(!Files.exists(Paths.get(buildDirectory)))
+            {
+                buildDirectory = env.getProject().getBasePath() + '/' + buildDirectory;
+            }
+            CoverageProcessEnded publisher = env.getProject().getMessageBus().syncPublisher(CoverageProcessEnded.GCOVERAGE_RUN_ENDED_TOPIC);
             publisher.ended(buildDirectory);
         }
     }

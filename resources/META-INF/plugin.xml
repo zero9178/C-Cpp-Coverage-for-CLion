@@ -28,7 +28,7 @@
     <depends>com.intellij.modules.lang</depends>
 
     <actions>
-        <action id="GCov.Action.CoverageRunner" class="GCov.Action.CoverageRunner" text="Coverage"
+        <action id="GCov.Action.CoverageButton" class="GCov.Action.CoverageButton" text="Coverage"
                 description="Run with GCoverage" icon="CoverageIcons.COVERAGE_RUNNER">
             <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
             <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
@@ -41,12 +41,8 @@
         <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="GCov.LineMarker.CoverageLineMarker"/>
         <projectService serviceInterface="GCov.State.EditorState" serviceImplementation="GCov.State.EditorState"/>
         <projectService serviceInterface="GCov.State.ShowNonProjectSourcesState" serviceImplementation="GCov.State.ShowNonProjectSourcesState"/>
+        <projectService serviceInterface="GCov.Data.CoverageData" serviceImplementation="GCov.Data.CoverageData"/>
         <!-- Add your extensions here -->
     </extensions>
 
-    <project-components>
-        <component>
-            <implementation-class>GCov.Data.GCovCoverageGatherer</implementation-class>
-        </component>
-    </project-components>
 </idea-plugin>

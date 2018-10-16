@@ -1,7 +1,8 @@
 package GCov.Window;
 
-import GCov.Data.GCovCoverageGatherer;
-import GCov.Messaging.GCoverageRunEnded;
+import GCov.Data.CoverageData;
+import GCov.Data.CoverageThread;
+import GCov.Messaging.CoverageProcessEnded;
 import GCov.State.EditorState;
 import GCov.State.ShowNonProjectSourcesState;
 import com.intellij.openapi.application.ApplicationManager;
@@ -20,7 +21,7 @@ import javax.swing.tree.DefaultMutableTreeNode;
  */
 public class GCovWindowFactory implements ToolWindowFactory {
 
-    static private GCovCoverageGatherer gatherer;
+    static private CoverageData coverageData;
     private ToolWindow m_toolWindow;
     private JPanel m_panel;
     private JCheckBox m_showNonProjectSources;
@@ -50,19 +51,20 @@ public class GCovWindowFactory implements ToolWindowFactory {
      */
     @Override
     public boolean shouldBeAvailable(@NotNull Project project) {
-        gatherer = GCovCoverageGatherer.getInstance(project);
-        project.getMessageBus().connect().subscribe(GCoverageRunEnded.GCOVERAGE_RUN_ENDED_TOPIC,
+        coverageData = CoverageData.getInstance(project);
+        project.getMessageBus().connect().subscribe(CoverageProcessEnded.GCOVERAGE_RUN_ENDED_TOPIC,
                 cmakeDirectory -> {
                     m_tree.resetModel();
                     m_tree.getEmptyText().setText("Gathering coverage data...");
-                    gatherer.setBuildDirectory(project.getBasePath() + "/" + cmakeDirectory);
-                    gatherer.gather(() -> gatherer.display(m_tree));
                     ApplicationManager.getApplication().invokeLater(() -> {
                         m_toolWindow.setAvailable(true,null);
                         m_toolWindow.show(null);
                     });
+                    CoverageThread thread = new CoverageThread(project,cmakeDirectory,
+                            ()-> CoverageData.getInstance(project).display(m_tree));
+                    thread.run();
                 });
-        return false;
+        return coverageData != null && !coverageData.getData().isEmpty();
     }
 
     /**
@@ -76,15 +78,15 @@ public class GCovWindowFactory implements ToolWindowFactory {
         m_tree.addMouseListener(new CoverageTree.TreeMouseHandler(project,m_tree));
         m_showNonProjectSources.addItemListener(e -> {
             ShowNonProjectSourcesState.getInstance(project).showNonProjectSources = m_showNonProjectSources.isSelected();
-            gatherer.display(m_tree);
+            coverageData.display(m_tree);
         });
         m_showInEditor.setSelected(EditorState.getInstance(project).showInEditor);
         m_showInEditor.addItemListener(e -> {
             EditorState.getInstance(project).showInEditor = m_showInEditor.isSelected();
-            gatherer.updateEditor();
+            coverageData.updateEditor();
         });
         m_clear.addActionListener(e -> {
-            gatherer.clearCoverage();
+            coverageData.clearCoverage();
             m_tree.resetModel();
         });
         ContentFactory contentFactory = ContentFactory.SERVICE.getInstance();

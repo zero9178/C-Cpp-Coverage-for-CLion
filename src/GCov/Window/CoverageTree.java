@@ -1,6 +1,7 @@
 package GCov.Window;
 
-import GCov.Data.GCovCoverageGatherer;
+import GCov.Data.CoverageFileData;
+import GCov.Data.CoverageFunctionData;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.project.Project;
@@ -10,9 +11,11 @@ import com.intellij.ui.dualView.TreeTableView;
 import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns;
 import com.intellij.ui.treeStructure.treetable.TreeColumnInfo;
 import com.intellij.ui.treeStructure.treetable.TreeTable;
+import com.intellij.ui.treeStructure.treetable.TreeTableModel;
 import com.intellij.util.ui.ColumnInfo;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.table.TableCellRenderer;
@@ -41,15 +44,14 @@ public class CoverageTree extends TreeTableView {
                         bar.setStringPainted(true);
                         bar.setOpaque(true);
                         DefaultMutableTreeNode node = (DefaultMutableTreeNode) o;
-                        if (node.getUserObject() instanceof GCovCoverageGatherer.CoverageFileData) {
-                            GCovCoverageGatherer.CoverageFileData file = (GCovCoverageGatherer.CoverageFileData)
-                                    node.getUserObject();
+                        if (node.getUserObject() instanceof CoverageFileData) {
+                            CoverageFileData file = (CoverageFileData)node.getUserObject();
                             bar.setMinimum(0);
                             bar.setMaximum(100);
                             double coverage = 0;
                             int lineCount = 0;
                             int coveredLineCount = 0;
-                            for (Map.Entry<String, GCovCoverageGatherer.CoverageFunctionData> entry : file.getData().entrySet()) {
+                            for (Map.Entry<String, CoverageFunctionData> entry : file.getFunctionData().entrySet()) {
                                 if(entry.getValue().getLines().isEmpty()) {
                                     continue;
                                 }
@@ -57,12 +59,12 @@ public class CoverageTree extends TreeTableView {
                                 lineCount += entry.getValue().getLines().size();
                                 coverage += entry.getValue().getCoverage() / (double) entry.getValue().getLines().size();
                             }
-                            bar.setValue((int) (100 * coverage / file.getData().size()));
+                            bar.setValue((int) (100 * coverage / file.getFunctionData().size()));
                             bar.setToolTipText(coveredLineCount + "/" + lineCount + " covered");
-                        } else if (node.getUserObject() instanceof GCovCoverageGatherer.CoverageFunctionData) {
+                        } else if (node.getUserObject() instanceof CoverageFunctionData) {
                             bar.setMinimum(0);
-                            GCovCoverageGatherer.CoverageFunctionData functionData =
-                                    (GCovCoverageGatherer.CoverageFunctionData) node.getUserObject();
+                            CoverageFunctionData functionData =
+                                    (CoverageFunctionData) node.getUserObject();
                             bar.setMaximum(functionData.getLines().isEmpty() ? 1 : functionData.getLines().size());
                             bar.setValue(functionData.getCoverage());
                             bar.setToolTipText(bar.getValue() + "/" + functionData.getLines().size() + " covered");
@@ -123,15 +125,15 @@ public class CoverageTree extends TreeTableView {
             }
             Object data = ((DefaultMutableTreeNode) m_tree.getValueAt(selRow, selColumn)).getUserObject();
 
-            if (data instanceof GCovCoverageGatherer.CoverageFileData) {
-                VirtualFile file = VfsUtil.findFileByIoFile(new File(((GCovCoverageGatherer.CoverageFileData) data).getFilePath()), true);
+            if (data instanceof CoverageFileData) {
+                VirtualFile file = VfsUtil.findFileByIoFile(new File(((CoverageFileData) data).getFilePath()), true);
                 if (file == null || file.getFileType().isBinary()) {
                     return;
                 }
 
                 FileEditorManager.getInstance(m_project).openEditor(new OpenFileDescriptor(m_project, file), true);
-            } else if (data instanceof GCovCoverageGatherer.CoverageFunctionData) {
-                GCovCoverageGatherer.CoverageFunctionData functionData = (GCovCoverageGatherer.CoverageFunctionData) data;
+            } else if (data instanceof CoverageFunctionData) {
+                CoverageFunctionData functionData = (CoverageFunctionData) data;
                 VirtualFile file = VfsUtil.findFileByIoFile(new File(functionData.getFileData().getFilePath()), true);
                 if (file == null || file.getFileType().isBinary()) {
                     return;

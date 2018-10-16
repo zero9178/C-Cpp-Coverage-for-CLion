@@ -1,6 +1,8 @@
 package GCov.LineMarker;
 
-import GCov.Data.GCovCoverageGatherer;
+import GCov.Data.CoverageData;
+import GCov.Data.CoverageFileData;
+import GCov.Data.CoverageLineData;
 import GCov.State.EditorState;
 import com.intellij.codeInsight.daemon.LineMarkerInfo;
 import com.intellij.codeInsight.daemon.LineMarkerProvider;
@@ -22,13 +24,13 @@ public class CoverageLineMarker implements LineMarkerProvider {
     @Override
     public @Nullable LineMarkerInfo getLineMarkerInfo(@NotNull PsiElement psiElement) {
         if(EditorState.getInstance(psiElement.getProject()).showInEditor && psiElement.getFirstChild() == null && psiElement.getText().contains("\n")) {
-            GCovCoverageGatherer gatherer = GCovCoverageGatherer.getInstance(psiElement.getProject());
+            CoverageData gatherer = CoverageData.getInstance(psiElement.getProject());
             PsiFile containingFile = psiElement.getContainingFile();
             String path = containingFile.getVirtualFile().getCanonicalPath();
             if(path == null || psiElement.getProject().getBasePath() == null || !path.startsWith(psiElement.getProject().getBasePath())) {
                 return null;
             }
-            GCovCoverageGatherer.CoverageFileData fileData = gatherer.getCoverageFromPath(path);
+            CoverageFileData fileData = gatherer.getCoverageFromPath(path);
             if(fileData == null) {
                 return null;
             }
@@ -40,7 +42,7 @@ public class CoverageLineMarker implements LineMarkerProvider {
             }
             int textOffset = psiElement.getTextOffset();
             int lineNumber = document.getLineNumber(textOffset)+1;
-            GCovCoverageGatherer.CoverageLineData lineData =  fileData.getLineData(lineNumber);
+            CoverageLineData lineData =  fileData.getLineDataAt(lineNumber);
             if(lineData == null) {
                 return null;
             }

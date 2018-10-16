@@ -48,9 +48,6 @@
               <hideActionText value="true"/>
               <horizontalAlignment value="0"/>
               <icon value="icons/gc.png"/>
-              <maximumSize width="30" height="30"/>
-              <minimumSize width="30" height="30"/>
-              <preferredSize width="30" height="30"/>
               <selected value="false"/>
               <text value=""/>
               <toolTipText value="Clear coverage"/>
