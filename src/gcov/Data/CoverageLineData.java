@@ -1,4 +1,4 @@
-package GCov.Data;
+package gcov.Data;
 
 public class CoverageLineData {
     private final int m_lineNumber;

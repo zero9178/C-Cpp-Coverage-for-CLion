@@ -1,6 +1,6 @@
-package GCov.Data;
+package gcov.Data;
 
-import GCov.Notification.GCovNotification;
+import gcov.notification.GCovNotification;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationType;
 import com.intellij.notification.Notifications;
@@ -46,21 +46,20 @@ public class CoverageThread extends Thread {
                     .directory(gcda.toFile().getParentFile())
                     .redirectOutput(new File(nullFile)).redirectErrorStream(true);
             Process p = builder.start();
-            try {
-                retCode = p.waitFor();
-            } catch (InterruptedException e) {
-                Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO
-                        .createNotification("Process timed out", NotificationType.ERROR);
-                Notifications.Bus.notify(notification,m_project);
-            }
+            retCode = p.waitFor();
             if (retCode != 0) {
-                Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+                Notification notification = GCovNotification.INSTANCE.getGROUP_DISPLAY_ID_INFO()
                         .createNotification("\"gcov\" returned with error code " + retCode, NotificationType.ERROR);
                 Notifications.Bus.notify(notification,m_project);
             }
         } catch (IOException e) {
-            Notification notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+            Notification notification = GCovNotification.INSTANCE.getGROUP_DISPLAY_ID_INFO()
                     .createNotification("\"gcov\" was not found in system path", NotificationType.ERROR);
+            Notifications.Bus.notify(notification,m_project);
+        }
+        catch (InterruptedException e) {
+            Notification notification = GCovNotification.INSTANCE.getGROUP_DISPLAY_ID_INFO()
+                    .createNotification("Process timed out", NotificationType.ERROR);
             Notifications.Bus.notify(notification,m_project);
         }
         return retCode == 0;

@@ -1,4 +1,4 @@
-package GCov.Data;
+package gcov.Data;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

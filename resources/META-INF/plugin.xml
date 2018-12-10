@@ -28,7 +28,7 @@
     <depends>com.intellij.modules.lang</depends>
 
     <actions>
-        <action id="GCov.Action.CoverageButton" class="GCov.Action.CoverageButton" text="Coverage"
+        <action id="gcov.action.CoverageButton" class="gcov.action.CoverageButton" text="Coverage"
                 description="Run with GCoverage" icon="CoverageIcons.COVERAGE_RUNNER">
             <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
             <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
@@ -37,11 +37,11 @@
 
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="GCoverage" anchor="right" factoryClass="GCov.Window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
-        <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="GCov.LineMarker.CoverageLineMarker"/>
-        <projectService serviceInterface="GCov.State.EditorState" serviceImplementation="GCov.State.EditorState"/>
-        <projectService serviceInterface="GCov.State.ShowNonProjectSourcesState" serviceImplementation="GCov.State.ShowNonProjectSourcesState"/>
-        <projectService serviceInterface="GCov.Data.CoverageData" serviceImplementation="GCov.Data.CoverageData"/>
+        <toolWindow id="GCoverage" anchor="right" factoryClass="gcov.Window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
+        <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="gcov.lineMarker.CoverageLineMarker"/>
+        <projectService serviceInterface="gcov.State.EditorState" serviceImplementation="gcov.State.EditorState"/>
+        <projectService serviceInterface="gcov.State.ShowNonProjectSourcesState" serviceImplementation="gcov.State.ShowNonProjectSourcesState"/>
+        <projectService serviceInterface="gcov.Data.CoverageData" serviceImplementation="gcov.Data.CoverageData"/>
         <!-- Add your extensions here -->
     </extensions>
 

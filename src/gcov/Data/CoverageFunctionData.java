@@ -1,4 +1,4 @@
-package GCov.Data;
+package gcov.Data;
 
 import java.util.Map;
 import java.util.TreeMap;

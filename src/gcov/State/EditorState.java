@@ -1,4 +1,4 @@
-package GCov.State;
+package gcov.State;
 
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.ServiceManager;

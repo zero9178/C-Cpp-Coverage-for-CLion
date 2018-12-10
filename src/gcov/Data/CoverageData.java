@@ -1,7 +1,11 @@
-package GCov.Data;
+package gcov.Data;
 
-import GCov.State.ShowNonProjectSourcesState;
-import GCov.Window.CoverageTree;
+import com.intellij.notification.Notification;
+import com.intellij.notification.NotificationType;
+import com.intellij.notification.Notifications;
+import gcov.notification.GCovNotification;
+import gcov.State.ShowNonProjectSourcesState;
+import gcov.Window.CoverageTree;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.ServiceManager;
@@ -27,7 +31,7 @@ import java.util.TreeMap;
 @State(name = "GCoverageCoverageData")
 public class CoverageData implements PersistentStateComponent<CoverageData> {
 
-    @Nullable
+    @NotNull
     @Override
     public CoverageData getState() {
         return this;
@@ -41,14 +45,20 @@ public class CoverageData implements PersistentStateComponent<CoverageData> {
     private Project m_project;
     private final Map<String, CoverageFileData> m_data = new TreeMap<>();
 
+    @Nullable
     public static CoverageData getInstance(@NotNull Project project) {
         CoverageData instance = ServiceManager.getService(project,CoverageData.class);
         if(instance != null) {
             instance.m_project = project;
+        } else {
+            Notification notification = GCovNotification.INSTANCE.getGROUP_DISPLAY_ID_INFO()
+                    .createNotification("Could not create instance of CoverageData", NotificationType.ERROR);
+            Notifications.Bus.notify(notification,project);
         }
         return instance;
     }
 
+    @NotNull
     @Contract(pure = true)
     public Map<String, CoverageFileData> getData() {
         return m_data;

@@ -1,10 +1,10 @@
-package GCov.Window;
+package gcov.Window;
 
-import GCov.Data.CoverageData;
-import GCov.Data.CoverageThread;
-import GCov.Messaging.CoverageProcessEnded;
-import GCov.State.EditorState;
-import GCov.State.ShowNonProjectSourcesState;
+import gcov.Data.CoverageData;
+import gcov.Data.CoverageThread;
+import gcov.messaging.CoverageProcessEnded;
+import gcov.State.EditorState;
+import gcov.State.ShowNonProjectSourcesState;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
@@ -52,7 +52,7 @@ public class GCovWindowFactory implements ToolWindowFactory {
     @Override
     public boolean shouldBeAvailable(@NotNull Project project) {
         coverageData = CoverageData.getInstance(project);
-        project.getMessageBus().connect().subscribe(CoverageProcessEnded.GCOVERAGE_RUN_ENDED_TOPIC,
+        project.getMessageBus().connect().subscribe(CoverageProcessEnded.Companion.getGCOVERAGE_RUN_ENDED_TOPIC(),
                 cmakeDirectory -> {
                     m_tree.resetModel();
                     m_tree.getEmptyText().setText("Gathering coverage data...");
