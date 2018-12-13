@@ -37,10 +37,10 @@
 
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="GCoverage" anchor="right" factoryClass="gcov.Window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
+        <toolWindow id="GCoverage" anchor="right" factoryClass="gcov.window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
         <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="gcov.lineMarker.CoverageLineMarker"/>
-        <projectService serviceInterface="gcov.State.EditorState" serviceImplementation="gcov.State.EditorState"/>
-        <projectService serviceInterface="gcov.State.ShowNonProjectSourcesState" serviceImplementation="gcov.State.ShowNonProjectSourcesState"/>
+        <projectService serviceInterface="gcov.state.EditorState" serviceImplementation="gcov.state.EditorState"/>
+        <projectService serviceInterface="gcov.state.ShowNonProjectSourcesState" serviceImplementation="gcov.state.ShowNonProjectSourcesState"/>
         <projectService serviceInterface="gcov.data.CoverageData" serviceImplementation="gcov.data.CoverageData"/>
         <!-- Add your extensions here -->
     </extensions>

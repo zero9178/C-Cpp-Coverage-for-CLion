@@ -1,10 +1,5 @@
 package gcov.data
 
-import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
-import gcov.notification.GCovNotification
-import gcov.State.ShowNonProjectSourcesState
-import gcov.Window.CoverageTree
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.ServiceManager
@@ -14,12 +9,12 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns
 import com.intellij.util.xmlb.XmlSerializerUtil
+import gcov.state.ShowNonProjectSourcesState
+import gcov.window.CoverageTree
 import org.jetbrains.annotations.Contract
-
-import javax.swing.tree.DefaultMutableTreeNode
 import java.nio.file.Paths
-import java.util.ArrayList
-import java.util.TreeMap
+import java.util.*
+import javax.swing.tree.DefaultMutableTreeNode
 
 @State(name = "GCoverageCoverageData")
 class CoverageData : PersistentStateComponent<CoverageData> {
@@ -109,7 +104,7 @@ class CoverageData : PersistentStateComponent<CoverageData> {
             }
         }
 
-        tree.setModel(ListTreeTableModelOnColumns(root, CoverageTree.getColumnInfo()))
+        tree.setModel(ListTreeTableModelOnColumns(root, CoverageTree.columnInfo))
         tree.setRootVisible(false)
         updateEditor()
     }

@@ -2,7 +2,7 @@ package gcov.data
 
 import java.util.TreeMap
 
-class CoverageFunctionData(var startLine: Int = -1, var endLine: Int = -1, var functionName: String = "<unknown function>", var executionCount: Int = 0) {
+class CoverageFunctionData(var startLine: Int = -1,private var endLine: Int = -1, var functionName: String = "<unknown function>", var executionCount: Int = 0) {
 
     private val myLines = TreeMap<Int, CoverageLineData>()
 
@@ -19,8 +19,8 @@ class CoverageFunctionData(var startLine: Int = -1, var endLine: Int = -1, var f
     val lines: Map<Int, CoverageLineData>
         get() = myLines
 
-    fun emplaceLine(lineNumber: Int, executionCount: Int, unexecutedBlock: Boolean) {
-        this.emplaceLine(CoverageLineData(lineNumber, executionCount, unexecutedBlock))
+    fun emplaceLine(lineNumber: Int, executionCount: Int) {
+        this.emplaceLine(CoverageLineData(lineNumber, executionCount))
     }
 
     fun emplaceLine(lineData: CoverageLineData) {

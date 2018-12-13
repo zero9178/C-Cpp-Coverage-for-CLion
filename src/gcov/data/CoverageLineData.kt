@@ -1,6 +1,6 @@
 package gcov.data
 
-class CoverageLineData(val lineNumber: Int, executionCount: Int, unexecutedBlock: Boolean) {
+class CoverageLineData(val lineNumber: Int, executionCount: Int) {
     var executionCount: Int = executionCount
         internal set
 

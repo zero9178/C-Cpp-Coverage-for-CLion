@@ -1,7 +1,7 @@
 package gcov.lineMarker
 
 import gcov.data.CoverageData
-import gcov.State.EditorState
+import gcov.state.EditorState
 import com.intellij.codeInsight.daemon.LineMarkerInfo
 import com.intellij.codeInsight.daemon.LineMarkerProvider
 import com.intellij.openapi.editor.markup.GutterIconRenderer

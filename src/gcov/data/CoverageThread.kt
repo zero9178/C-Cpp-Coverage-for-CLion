@@ -15,6 +15,10 @@ import kotlin.streams.toList
 class CoverageThread(private val m_project: Project, private val m_buildDirectory: String, private val myRunner: Runnable?) : Thread() {
     private val myData = CoverageData.getInstance(m_project)
 
+    init {
+        name = "CoverageThread"
+    }
+
     private fun generateGCDA(gcda: File) {
         try {
             val nullFile = if (System.getProperty("os.name").startsWith("Windows")) {
@@ -77,7 +81,7 @@ class CoverageThread(private val m_project: Project, private val m_buildDirector
                     val lineNumber = Integer.parseInt(list[0])
                     val executionCount = Integer.parseInt(list[1])
                     val functionData = currentFile.functionFromLine(lineNumber)
-                    functionData.emplaceLine(lineNumber, executionCount, Integer.parseInt(list[2]) == 1)
+                    functionData.emplaceLine(lineNumber, executionCount)
                 }
                 "branch" -> {
 
@@ -97,14 +101,16 @@ class CoverageThread(private val m_project: Project, private val m_buildDirector
         myData.clearCoverage()
         File(m_buildDirectory).walkTopDown().asSequence().filter {
             it.isFile && it.name.endsWith(".gcda")
-        }.forEach {
+        }.forEach { it ->
             generateGCDA(it)
             val gcov = it.toString() + ".gcov"
             if (!Paths.get(gcov).toFile().exists()) {
                 return
             }
 
-            val lines = Files.lines(Paths.get(gcov)).toList()
+            val lines = Files.lines(Paths.get(gcov)).use { stream ->
+                stream.toList()
+            }
             if (!Paths.get(gcov).toFile().delete() || lines.isEmpty()) {
                 return
             }

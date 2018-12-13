@@ -1,10 +1,10 @@
-package gcov.Window;
+package gcov.window;
 
 import gcov.data.CoverageData;
 import gcov.data.CoverageThread;
 import gcov.messaging.CoverageProcessEnded;
-import gcov.State.EditorState;
-import gcov.State.ShowNonProjectSourcesState;
+import gcov.state.EditorState;
+import gcov.state.ShowNonProjectSourcesState;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
@@ -77,12 +77,12 @@ public class GCovWindowFactory implements ToolWindowFactory {
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
         m_tree.addMouseListener(new CoverageTree.TreeMouseHandler(project,m_tree));
         m_showNonProjectSources.addItemListener(e -> {
-            ShowNonProjectSourcesState.getInstance(project).showNonProjectSources = m_showNonProjectSources.isSelected();
+            ShowNonProjectSourcesState.Companion.getInstance(project).setShowNonProjectSources(m_showNonProjectSources.isSelected());
             coverageData.display(m_tree);
         });
-        m_showInEditor.setSelected(EditorState.getInstance(project).showInEditor);
+        m_showInEditor.setSelected(EditorState.Companion.getInstance(project).getShowInEditor());
         m_showInEditor.addItemListener(e -> {
-            EditorState.getInstance(project).showInEditor = m_showInEditor.isSelected();
+            EditorState.Companion.getInstance(project).setShowInEditor(m_showInEditor.isSelected());
             coverageData.updateEditor();
         });
         m_clear.addActionListener(e -> {
