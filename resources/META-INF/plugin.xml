@@ -41,7 +41,7 @@
         <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="gcov.lineMarker.CoverageLineMarker"/>
         <projectService serviceInterface="gcov.State.EditorState" serviceImplementation="gcov.State.EditorState"/>
         <projectService serviceInterface="gcov.State.ShowNonProjectSourcesState" serviceImplementation="gcov.State.ShowNonProjectSourcesState"/>
-        <projectService serviceInterface="gcov.Data.CoverageData" serviceImplementation="gcov.Data.CoverageData"/>
+        <projectService serviceInterface="gcov.data.CoverageData" serviceImplementation="gcov.data.CoverageData"/>
         <!-- Add your extensions here -->
     </extensions>
 

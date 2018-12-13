@@ -1,7 +1,7 @@
 package gcov.Window;
 
-import gcov.Data.CoverageData;
-import gcov.Data.CoverageThread;
+import gcov.data.CoverageData;
+import gcov.data.CoverageThread;
 import gcov.messaging.CoverageProcessEnded;
 import gcov.State.EditorState;
 import gcov.State.ShowNonProjectSourcesState;
@@ -51,7 +51,7 @@ public class GCovWindowFactory implements ToolWindowFactory {
      */
     @Override
     public boolean shouldBeAvailable(@NotNull Project project) {
-        coverageData = CoverageData.getInstance(project);
+        coverageData = CoverageData.Companion.getInstance(project);
         project.getMessageBus().connect().subscribe(CoverageProcessEnded.Companion.getGCOVERAGE_RUN_ENDED_TOPIC(),
                 cmakeDirectory -> {
                     m_tree.resetModel();
@@ -61,10 +61,10 @@ public class GCovWindowFactory implements ToolWindowFactory {
                         m_toolWindow.show(null);
                     });
                     CoverageThread thread = new CoverageThread(project,cmakeDirectory,
-                            ()-> CoverageData.getInstance(project).display(m_tree));
+                            ()-> CoverageData.Companion.getInstance(project).display(m_tree));
                     thread.run();
                 });
-        return coverageData != null && !coverageData.getData().isEmpty();
+        return coverageData != null && !coverageData.getCoverageData().isEmpty();
     }
 
     /**

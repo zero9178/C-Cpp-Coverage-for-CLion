@@ -1,7 +1,7 @@
 package gcov.Window;
 
-import gcov.Data.CoverageFileData;
-import gcov.Data.CoverageFunctionData;
+import gcov.data.CoverageFileData;
+import gcov.data.CoverageFunctionData;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.project.Project;

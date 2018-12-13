@@ -1,6 +1,6 @@
 package gcov.lineMarker
 
-import gcov.Data.CoverageData
+import gcov.data.CoverageData
 import gcov.State.EditorState
 import com.intellij.codeInsight.daemon.LineMarkerInfo
 import com.intellij.codeInsight.daemon.LineMarkerProvider
@@ -16,7 +16,7 @@ class CoverageLineMarker : LineMarkerProvider {
             return null
         }
 
-        val gatherer = CoverageData.getInstance(psiElement.project) ?: return null
+        val gatherer = CoverageData.getInstance(psiElement.project)
 
         val containingFile = psiElement.containingFile
         val path = containingFile.virtualFile.canonicalPath

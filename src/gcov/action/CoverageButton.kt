@@ -33,24 +33,13 @@ class CoverageButton : AnAction() {
      */
     internal class ProcessEndHandler : ExecutionListener {
 
-        var myExecutionID: Long = 0
+        var executionID: Long = 0
         private val myConnected = HashSet<Project>()
-
-        /**
-         * Sets the executionID of the process to listen to
-         *
-         * @param executionID ExecutionID of the process
-         */
-        fun setExecutionID(executionID: Long) {
-            myExecutionID = executionID
-        }
 
         /**
          * Removes all projects from the set that are already disposed
          */
-        private fun disposeProjects() {
-            myConnected.removeIf{ it.isDisposed }
-        }
+        private fun disposeProjects() = myConnected.removeIf{ it.isDisposed }
 
         /**
          * Connects to the message bus of the project if it doesn't have a connection already
@@ -76,21 +65,20 @@ class CoverageButton : AnAction() {
          * @param exitCode exit code of the process
          */
         override fun processTerminated(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler, exitCode: Int) {
-            if (env.executionId != myExecutionID) {
+            if (env.executionId != executionID) {
                 return
             }
             val target = env.executionTarget.displayName
             val settings = env.project.getComponent(CMakeSettings::class.java) ?: return
-            var buildDirectory: String? = null
-            for (profile in settings.profiles) {
-                if (profile.name == target) {
-                    buildDirectory = if (profile.generationDir == null) {
-                        "cmake-build-" + target.toLowerCase()
-                    } else {
-                        profile.generationDir.toString()
-                    }
-                    break
+            val profile = settings.profiles.find { it.name == target }
+            var buildDirectory: String? = if (profile != null) {
+                if (profile.generationDir == null) {
+                    "cmake-build-" + target.toLowerCase()
+                } else {
+                    profile.generationDir.toString()
                 }
+            } else {
+                null
             }
 
             if (buildDirectory == null) {
@@ -101,7 +89,7 @@ class CoverageButton : AnAction() {
             }
 
             if (!Files.exists(Paths.get(buildDirectory))) {
-                buildDirectory = env.project.basePath + '/'.toString() + buildDirectory
+                buildDirectory =  "${env.project.basePath}/$buildDirectory"
             }
             val publisher = env.project.messageBus.syncPublisher(CoverageProcessEnded.GCOVERAGE_RUN_ENDED_TOPIC)
             publisher.ended(buildDirectory)
@@ -153,17 +141,20 @@ class CoverageButton : AnAction() {
             return
         }
 
-        ProgramRunnerUtil.executeConfigurationAsync(envBuilder.contentToReuse(null).dataContext(null).activeTarget().build(),
-                true, true
-        ) { runContentDescriptor ->
-            m_handler.connect(project)
-            m_handler.setExecutionID(runContentDescriptor.executionId)
-        }
+        val environment = envBuilder.run {
+            contentToReuse(null)
+            dataContext(null)
+            activeTarget()
+        }.build()
 
+        ProgramRunnerUtil.executeConfigurationAsync(environment, true, true) {
+            myHandler.connect(project)
+            myHandler.executionID = it.executionId
+        }
     }
 
     companion object {
 
-        private val m_handler = ProcessEndHandler()
+        private val myHandler = ProcessEndHandler()
     }
 }
