@@ -16,8 +16,7 @@ import java.nio.file.Paths
 import java.util.*
 import javax.swing.tree.DefaultMutableTreeNode
 
-@State(name = "GCoverageCoverageData")
-class CoverageData : PersistentStateComponent<CoverageData> {
+class CoverageData  {
 
     private var myProject: Project? = null
     private val myData = TreeMap<String, CoverageFileData>()
@@ -25,10 +24,6 @@ class CoverageData : PersistentStateComponent<CoverageData> {
     val coverageData: Map<String, CoverageFileData>
         @Contract(pure = true)
         get() = myData
-
-    override fun getState(): CoverageData = this
-
-    override fun loadState(coverageData: CoverageData) = XmlSerializerUtil.copyBean(coverageData, this)
 
     fun setCoverageForPath(path: String, fileData: CoverageFileData) {
         myData[path] = fileData

@@ -6,14 +6,15 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import gcov.notification.GCovNotification
+import gcov.state.GCovPath
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.streams.toList
 
-class CoverageThread(private val m_project: Project, private val m_buildDirectory: String, private val myRunner: Runnable?) : Thread() {
-    private val myData = CoverageData.getInstance(m_project)
+class CoverageThread(private val myProject: Project, private val m_buildDirectory: String, private val myRunner: Runnable?) : Thread() {
+    private val myData = CoverageData.getInstance(myProject)
 
     init {
         name = "CoverageThread"
@@ -26,7 +27,8 @@ class CoverageThread(private val m_project: Project, private val m_buildDirector
             } else {
                 "/dev/zero"
             }
-            val builder = ProcessBuilder("gcov", "-i", "-m", "-b", gcda.toString()).run {
+            val path = GCovPath.getInstance(myProject).gcovPath
+            val builder = ProcessBuilder(if(path.isEmpty())"gcov" else "$path/gcov", "-i", "-m", "-b", gcda.toString()).run {
                 directory(gcda.parentFile)
                 redirectOutput(File(nullFile))
                 redirectErrorStream(true)
@@ -39,11 +41,11 @@ class CoverageThread(private val m_project: Project, private val m_buildDirector
         } catch (e: IOException) {
             val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
                     .createNotification("\"gcov\" was not found in system path", NotificationType.ERROR)
-            Notifications.Bus.notify(notification, m_project)
+            Notifications.Bus.notify(notification, myProject)
         } catch (e: InterruptedException) {
             val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
                     .createNotification("Process timed out", NotificationType.ERROR)
-            Notifications.Bus.notify(notification, m_project)
+            Notifications.Bus.notify(notification, myProject)
         }
 
     }
