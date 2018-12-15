@@ -6,7 +6,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import gcov.notification.GCovNotification
-import gcov.state.GCovPath
+import gcov.state.GCovSettings
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -27,8 +27,8 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
             } else {
                 "/dev/zero"
             }
-            val path = GCovPath.getInstance(myProject).gcovPath
-            val builder = ProcessBuilder(if(path.isEmpty())"gcov" else "$path/gcov", "-i", "-m", "-b", gcda.toString()).run {
+            val path = GCovSettings.getInstance(myProject).gcovPath
+            val builder = ProcessBuilder(if(path.isEmpty())"gcov" else path, "-i", "-m", "-b", gcda.toString()).run {
                 directory(gcda.parentFile)
                 redirectOutput(File(nullFile))
                 redirectErrorStream(true)
@@ -105,15 +105,17 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
             it.isFile && it.name.endsWith(".gcda")
         }.forEach { it ->
             generateGCDA(it)
-            val gcov = it.toString() + ".gcov"
-            if (!Paths.get(gcov).toFile().exists()) {
+            val gcov = File(Paths.get(it.toString()).parent.toString()).walkTopDown().maxDepth(1).asSequence().filter {
+                "${it.name.substring(0,it.name.indexOf('.'))}.*.gcov".toRegex().matches(it.name)
+            }.first().toPath()
+            if (!gcov.toFile().exists()) {
                 return
             }
 
-            val lines = Files.lines(Paths.get(gcov)).use { stream ->
+            val lines = Files.lines(gcov).use { stream ->
                 stream.toList()
             }
-            if (!Paths.get(gcov).toFile().delete() || lines.isEmpty()) {
+            if (!gcov.toFile().delete() || lines.isEmpty()) {
                 return
             }
             parseGCov(lines)

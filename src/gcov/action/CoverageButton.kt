@@ -12,6 +12,7 @@ import com.intellij.notification.Notifications
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.cmake.CMakeSettings
 
 import java.nio.file.Files
@@ -24,6 +25,8 @@ import java.util.HashSet
  * Class representing the option in the run menu as well as the button in the top right for running coverage
  */
 class CoverageButton : AnAction() {
+
+    private var init = false
 
     /**
      * Class handling termination events
@@ -106,6 +109,10 @@ class CoverageButton : AnAction() {
      */
     override fun update(e: AnActionEvent) {
         val project = e.project
+        if(!init && project != null) {
+            //ToolWindowManager.getInstance(project).registerToolWindow()
+            init = true
+        }
         if (project == null) {
             e.presentation.isEnabled = false
             return

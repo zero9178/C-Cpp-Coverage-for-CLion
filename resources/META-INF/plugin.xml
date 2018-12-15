@@ -35,13 +35,20 @@
         </action>
     </actions>
 
+    <project-components>
+        <component>
+            <interface-class>gcov.data.CoverageData</interface-class>
+            <implementation-class>gcov.data.CoverageData</implementation-class>
+            <loadForDefaultProject/>
+        </component>
+    </project-components>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="GCoverage" anchor="right" factoryClass="gcov.window.GCovWindowFactory" icon="CoverageIcons.COVERAGE_RUNNER"/>
         <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="gcov.lineMarker.CoverageLineMarker"/>
         <projectService serviceInterface="gcov.state.EditorState" serviceImplementation="gcov.state.EditorState"/>
         <projectService serviceInterface="gcov.state.ShowNonProjectSourcesState" serviceImplementation="gcov.state.ShowNonProjectSourcesState"/>
-        <projectService serviceInterface="gcov.state.GCovPath" serviceImplementation="gcov.state.GCovPath"/>
+        <projectService serviceInterface="gcov.state.GCovSettings" serviceImplementation="gcov.state.GCovSettings"/>
         <!-- Add your extensions here -->
     </extensions>
 
