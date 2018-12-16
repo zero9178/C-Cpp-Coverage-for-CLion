@@ -7,9 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.XmlSerializerUtil
 
 @State(name = "GCoverageShowNonProjectSources")
-class ShowNonProjectSourcesState : PersistentStateComponent<ShowNonProjectSourcesState> {
-
-    var showNonProjectSources = false
+class ShowNonProjectSourcesState(var showNonProjectSources:Boolean = false) : PersistentStateComponent<ShowNonProjectSourcesState> {
 
     override fun getState(): ShowNonProjectSourcesState = this
 

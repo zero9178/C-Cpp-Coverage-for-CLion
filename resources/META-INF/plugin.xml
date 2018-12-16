@@ -49,6 +49,7 @@
         <projectService serviceInterface="gcov.state.EditorState" serviceImplementation="gcov.state.EditorState"/>
         <projectService serviceInterface="gcov.state.ShowNonProjectSourcesState" serviceImplementation="gcov.state.ShowNonProjectSourcesState"/>
         <projectService serviceInterface="gcov.state.GCovSettings" serviceImplementation="gcov.state.GCovSettings"/>
+        <projectConfigurable groupId="tools" id="GCoverage.settings" instance="gcov.window.GCovSettingsWindow" displayName="GCoverage"/>
         <!-- Add your extensions here -->
     </extensions>
 

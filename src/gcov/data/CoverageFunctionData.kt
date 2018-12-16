@@ -2,14 +2,14 @@ package gcov.data
 
 import java.util.TreeMap
 
-class CoverageFunctionData(var startLine: Int = -1,private var endLine: Int = -1, var functionName: String = "<unknown function>", var executionCount: Int = 0) {
+class CoverageFunctionData(var startLine: Int = -1, internal var endLine: Int = -1, var functionName: String = "<unknown function>") {
 
     private val myLines = TreeMap<Int, CoverageLineData>()
 
     var fileData: CoverageFileData? = null
         internal set
 
-    constructor(fileData: CoverageFileData) : this(){
+    constructor(fileData: CoverageFileData) : this() {
         this.fileData = fileData
     }
 

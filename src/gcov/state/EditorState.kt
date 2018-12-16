@@ -7,9 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.XmlSerializerUtil
 
 @State(name = "GCoverageShowInEditor")
-class EditorState : PersistentStateComponent<EditorState> {
-
-    var showInEditor = true
+data class EditorState(var showInEditor: Boolean = true) : PersistentStateComponent<EditorState> {
 
     override fun getState(): EditorState = this
 

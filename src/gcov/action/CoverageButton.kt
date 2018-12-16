@@ -26,8 +26,6 @@ import java.util.HashSet
  */
 class CoverageButton : AnAction() {
 
-    private var init = false
-
     /**
      * Class handling termination events
      *
@@ -76,7 +74,7 @@ class CoverageButton : AnAction() {
             val profile = settings.profiles.find { it.name == target }
             var buildDirectory: String? = if (profile != null) {
                 if (profile.generationDir == null) {
-                    "cmake-build-" + target.toLowerCase()
+                    "cmake-build-" + target.toLowerCase().replace(' ','-').replace(".","")
                 } else {
                     profile.generationDir.toString()
                 }
@@ -109,10 +107,6 @@ class CoverageButton : AnAction() {
      */
     override fun update(e: AnActionEvent) {
         val project = e.project
-        if(!init && project != null) {
-            //ToolWindowManager.getInstance(project).registerToolWindow()
-            init = true
-        }
         if (project == null) {
             e.presentation.isEnabled = false
             return

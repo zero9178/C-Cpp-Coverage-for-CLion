@@ -21,7 +21,7 @@ import javax.swing.tree.DefaultMutableTreeNode;
  */
 public class GCovWindowFactory implements ToolWindowFactory {
 
-    static private CoverageData coverageData;
+    private CoverageData m_coverageData;
     private ToolWindow m_toolWindow;
     private JPanel m_panel;
     private JCheckBox m_showNonProjectSources;
@@ -51,7 +51,7 @@ public class GCovWindowFactory implements ToolWindowFactory {
      */
     @Override
     public boolean shouldBeAvailable(@NotNull Project project) {
-        coverageData = CoverageData.Companion.getInstance(project);
+        m_coverageData = CoverageData.Companion.getInstance(project);
         project.getMessageBus().connect().subscribe(CoverageProcessEnded.Companion.getGCOVERAGE_RUN_ENDED_TOPIC(),
                 cmakeDirectory -> {
                     m_tree.resetModel();
@@ -61,10 +61,10 @@ public class GCovWindowFactory implements ToolWindowFactory {
                         m_toolWindow.show(null);
                     });
                     CoverageThread thread = new CoverageThread(project,cmakeDirectory,
-                            ()-> CoverageData.Companion.getInstance(project).display(m_tree));
-                    thread.run();
+                            ()-> m_coverageData.display(m_tree));
+                    thread.start();
                 });
-        return coverageData != null && !coverageData.getCoverageData().isEmpty();
+        return m_coverageData != null && !m_coverageData.getCoverageData().isEmpty();
     }
 
     /**
@@ -76,17 +76,18 @@ public class GCovWindowFactory implements ToolWindowFactory {
     @Override
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
         m_tree.addMouseListener(new CoverageTree.TreeMouseHandler(project,m_tree));
+        m_showNonProjectSources.setSelected(ShowNonProjectSourcesState.Companion.getInstance(project).getShowNonProjectSources());
         m_showNonProjectSources.addItemListener(e -> {
             ShowNonProjectSourcesState.Companion.getInstance(project).setShowNonProjectSources(m_showNonProjectSources.isSelected());
-            coverageData.display(m_tree);
+            m_coverageData.display(m_tree);
         });
         m_showInEditor.setSelected(EditorState.Companion.getInstance(project).getShowInEditor());
         m_showInEditor.addItemListener(e -> {
             EditorState.Companion.getInstance(project).setShowInEditor(m_showInEditor.isSelected());
-            coverageData.updateEditor();
+            m_coverageData.updateEditor();
         });
         m_clear.addActionListener(e -> {
-            coverageData.clearCoverage();
+            m_coverageData.clearCoverage();
             m_tree.resetModel();
         });
         ContentFactory contentFactory = ContentFactory.SERVICE.getInstance();

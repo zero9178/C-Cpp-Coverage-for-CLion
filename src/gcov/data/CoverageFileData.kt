@@ -4,31 +4,28 @@ import java.util.HashMap
 import java.util.TreeMap
 
 class CoverageFileData(val filePath: String) {
-    private val myData = TreeMap<String, CoverageFunctionData>()
     private val myLineData: MutableMap<Int, CoverageLineData> = HashMap()
 
-    val functionData: Map<String, CoverageFunctionData>
-        get() = myData
+    var functionData: MutableMap<String, CoverageFunctionData> = TreeMap()
+        internal set
 
     val lineData: MutableMap<Int,CoverageLineData>
         get() = myLineData
 
-    fun emplaceFunction(startLine: Int, endLine: Int, executionCount: Int, functionName: String) {
-        this.emplaceFunction(CoverageFunctionData(startLine, endLine, functionName,executionCount))
+    fun emplaceFunction(startLine: Int, endLine: Int, functionName: String) {
+        this.emplaceFunction(CoverageFunctionData(startLine, endLine, functionName))
     }
 
     fun emplaceFunction(functionData: CoverageFunctionData) {
-        val data = myData[functionData.functionName]
+        val data = this.functionData[functionData.functionName]
         if (data == null) {
             functionData.fileData = this
-            myData[functionData.functionName] = functionData
-        } else {
-            data.executionCount += functionData.executionCount
+            this.functionData[functionData.functionName] = functionData
         }
     }
 
     fun functionFromLine(line: Int): CoverageFunctionData =
-            myData.values.find{ it.lineIsInFunction(line) } ?: myData.getOrDefault("<unknown function>", CoverageFunctionData(this))
+            functionData.values.find{ it.lineIsInFunction(line) } ?: functionData.getOrDefault("<unknown function>", CoverageFunctionData(this))
 
     fun getLineDataAt(line: Int): CoverageLineData? = myLineData[line]
 }

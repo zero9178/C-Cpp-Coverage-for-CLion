@@ -7,14 +7,17 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import gcov.notification.GCovNotification
 import gcov.state.GCovSettings
+import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
+import java.io.InputStreamReader
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.streams.toList
 
-class CoverageThread(private val myProject: Project, private val m_buildDirectory: String, private val myRunner: Runnable?) : Thread() {
+class CoverageThread(private val myProject: Project, private val myBuildDirectory: String, private val myRunner: Runnable?) : Thread() {
     private val myData = CoverageData.getInstance(myProject)
+    private val myLinesSaid = HashSet<List<String>>()
 
     init {
         name = "CoverageThread"
@@ -22,21 +25,38 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
 
     private fun generateGCDA(gcda: File) {
         try {
+            var lines = mutableListOf<String>()
             val nullFile = if (System.getProperty("os.name").startsWith("Windows")) {
                 "NUL"
             } else {
                 "/dev/zero"
             }
             val path = GCovSettings.getInstance(myProject).gcovPath
-            val builder = ProcessBuilder(if(path.isEmpty())"gcov" else path, "-i", "-m", "-b", gcda.toString()).run {
+            val builder = ProcessBuilder(path, "-i", "-m", "-b", gcda.toString()).run {
                 directory(gcda.parentFile)
                 redirectOutput(File(nullFile))
-                redirectErrorStream(true)
+                redirectErrorStream(false)
             }
             val p = builder.start()
+            val reader = BufferedReader(InputStreamReader(p.errorStream))
+            do {
+                val line = reader.readLine() ?: break
+                lines.add(line)
+            }while (true)
             val retCode = p.waitFor()
             if (retCode != 0) {
                 log.warn("\"gcov\" returned with error code $retCode")
+            }
+            if(lines.isNotEmpty()) {
+                lines = lines.map {
+                    val pathConverted = it.replace('\\','/')
+                    pathConverted.substring(1 + pathConverted.indexOf(':',pathConverted.indexOf('/')))
+                }.toMutableList()
+                if(myLinesSaid.add(lines)) {
+                    val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+                            .createNotification("gcov returned following warning:\n" + lines.joinToString("\n"),NotificationType.WARNING)
+                    Notifications.Bus.notify(notification,myProject)
+                }
             }
         } catch (e: IOException) {
             val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
@@ -47,10 +67,11 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
                     .createNotification("Process timed out", NotificationType.ERROR)
             Notifications.Bus.notify(notification, myProject)
         }
-
     }
 
     private fun parseGCov(lines: List<String>) {
+        var functionsSet = false
+        val version = GCovSettings.getInstance(myProject).version
         var currentFile: CoverageFileData? = null
         loop@ for (line in lines) {
             val substring = line.substring(line.indexOf(':') + 1)
@@ -68,18 +89,35 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
                         break@loop
                     }
                     val list = substring.split(',')
-                    val startLine = Integer.parseInt(list[0])
-                    val endLine = Integer.parseInt(list[1])
-                    val executionCount = Integer.parseInt(list[2])
-                    val function = list.drop(3).fold("") { lhs, rhs -> lhs + rhs }
-                    currentFile.emplaceFunction(startLine, endLine, executionCount, function)
+
+                    functionsSet = false
+                    if(version == 8) {
+                        val startLine = Integer.parseInt(list[0])
+                        val endLine = Integer.parseInt(list[1])
+                        val function = list.drop(3).fold("") { lhs, rhs -> lhs + rhs }
+                        currentFile.emplaceFunction(startLine, endLine, function)
+                    } else {
+                        val startLine = Integer.parseInt(list[0])
+                        val function = list.drop(2).fold("") {lhs,rhs -> lhs + rhs}
+                        currentFile.emplaceFunction(startLine,-1,function)
+                    }
                 }
                 "lcount" -> {
                     if (currentFile == null) {
                         log.assertTrue(false, "\"lcount\" statement found before a file statement")
                         break@loop
                     }
+                    if(!functionsSet) {
+                        functionsSet = true
+                        if(version < 8) {
+                            val list = currentFile.functionData.values.sortedBy { it.startLine }.toList()
+                            list.mapIndexed{index,data ->
+                                data.endLine = list.getOrNull(index+1)?.startLine?.minus(1) ?: Int.MAX_VALUE
+                            }
+                        }
+                    }
                     val list = substring.split(',')
+
                     val lineNumber = Integer.parseInt(list[0])
                     val executionCount = Integer.parseInt(list[1])
                     val functionData = currentFile.functionFromLine(lineNumber)
@@ -100,25 +138,30 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
     }
 
     override fun run() {
-        myData.clearCoverage()
-        File(m_buildDirectory).walkTopDown().asSequence().filter {
-            it.isFile && it.name.endsWith(".gcda")
-        }.forEach { it ->
-            generateGCDA(it)
-            val gcov = File(Paths.get(it.toString()).parent.toString()).walkTopDown().maxDepth(1).asSequence().filter {
-                "${it.name.substring(0,it.name.indexOf('.'))}.*.gcov".toRegex().matches(it.name)
-            }.first().toPath()
-            if (!gcov.toFile().exists()) {
-                return
-            }
+        synchronized(myData) {
+            myData.clearCoverage()
+            File(myBuildDirectory).walkTopDown().asSequence().filter {
+                it.isFile && when {
+                    it.name.endsWith(".gcda") -> true
+                    it.name.endsWith(".gcov") -> {
+                        it.delete()
+                        false
+                    }
+                    else -> false
+                }
+            }.toList().forEach(::generateGCDA)
 
-            val lines = Files.lines(gcov).use { stream ->
-                stream.toList()
+            File(myBuildDirectory).walkTopDown().asSequence().filter {
+                it.isFile && it.name.endsWith(".gcov")
+            }.forEach forEach@{
+                val lines = Files.lines(it.toPath()).use { stream ->
+                    stream.toList()
+                }
+                if (!it.delete() || lines.isEmpty()) {
+                    return@forEach
+                }
+                parseGCov(lines)
             }
-            if (!gcov.toFile().delete() || lines.isEmpty()) {
-                return
-            }
-            parseGCov(lines)
         }
 
         if (myRunner != null) {
@@ -128,6 +171,6 @@ class CoverageThread(private val myProject: Project, private val m_buildDirector
 
     companion object {
 
-        private val log = Logger.getInstance(CoverageData::class.java)
+        private val log = Logger.getInstance(CoverageThread::class.java)
     }
 }

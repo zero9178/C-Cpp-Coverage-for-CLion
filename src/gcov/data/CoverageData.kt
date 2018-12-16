@@ -10,6 +10,7 @@ import gcov.window.CoverageTree
 import org.jetbrains.annotations.Contract
 import java.nio.file.Paths
 import java.util.*
+import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 
 class CoverageData(val project: Project) {
@@ -37,6 +38,9 @@ class CoverageData(val project: Project) {
         val files = ArrayList(myData.keys)
         myData.clear()
 
+        if(!SwingUtilities.isEventDispatchThread()) {
+            return
+        }
         val basePath = project.basePath
         for (file in files) {
             if (basePath != null && !file.startsWith(basePath)) {
@@ -63,9 +67,9 @@ class CoverageData(val project: Project) {
         }
 
         val root = DefaultMutableTreeNode("invisibile-root")
-        val basePath = this.project.basePath
+        val basePath = project.basePath
         for ((key, value) in myData) {
-            if (!ShowNonProjectSourcesState.getInstance(this.project).showNonProjectSources && (basePath == null || !key.startsWith(basePath))) {
+            if (!ShowNonProjectSourcesState.getInstance(project).showNonProjectSources && (basePath == null || !key.startsWith(basePath))) {
                 continue
             }
 

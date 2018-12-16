@@ -126,7 +126,7 @@ class CoverageTree(root: DefaultMutableTreeNode) : TreeTableView(ListTreeTableMo
                         bar.minimum = 0
                         bar.maximum = if (userObject.lines.isEmpty()) 1 else userObject.lines.size
                         bar.value = userObject.coverage
-                        bar.toolTipText = bar.value.toString() + "/" + userObject.lines.size + " covered"
+                        bar.toolTipText = bar.value.toString() + "/" + bar.maximum + " covered"
                     }
                     return bar
                 }
