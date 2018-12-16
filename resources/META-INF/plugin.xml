@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.zero9178</id>
     <name>GCoverage</name>
-    <version>1.1.1</version>
+    <version>1.1.2</version>
     <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
 
     <description><![CDATA[
@@ -9,6 +9,7 @@
     ]]></description>
 
     <change-notes><![CDATA[
+      1.1.2:Fixed bug with Coverage not working in Linux and on older versions of GCC. Supported versions of gcov are now 4.8 to 8.2.<br/>
       1.1.1:Fixed bug with Coverage not running after normal application exit. Filepaths are now relative to project root if only showing project sources<br/>
       1.1:  Fixed bug with Coverage not working during tests. Fixed bug with incorrect File coverage displayed. Added clear button<br/>
       1.0:  Initial Release</br>
