@@ -12,6 +12,7 @@ import com.intellij.openapi.wm.ToolWindowFactory;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentFactory;
 import org.jetbrains.annotations.NotNull;
+import com.jetbrains.cidr.cpp.toolchains.CPPToolchains;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -53,14 +54,14 @@ public class GCovWindowFactory implements ToolWindowFactory {
     public boolean shouldBeAvailable(@NotNull Project project) {
         m_coverageData = CoverageData.Companion.getInstance(project);
         project.getMessageBus().connect().subscribe(CoverageProcessEnded.Companion.getGCOVERAGE_RUN_ENDED_TOPIC(),
-                cmakeDirectory -> {
+                (cmakeDirectory, toolchain) -> {
                     m_tree.resetModel();
                     m_tree.getEmptyText().setText("Gathering coverage data...");
                     ApplicationManager.getApplication().invokeLater(() -> {
                         m_toolWindow.setAvailable(true,null);
                         m_toolWindow.show(null);
                     });
-                    CoverageThread thread = new CoverageThread(project,cmakeDirectory,
+                    CoverageThread thread = new CoverageThread(project,cmakeDirectory,toolchain,
                             ()-> m_coverageData.display(m_tree));
                     thread.start();
                 });

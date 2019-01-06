@@ -5,6 +5,8 @@ import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
+import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import gcov.notification.GCovNotification
 import gcov.state.GCovSettings
 import java.io.BufferedReader
@@ -12,10 +14,9 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
 import java.nio.file.Files
-import java.nio.file.Paths
 import kotlin.streams.toList
 
-class CoverageThread(private val myProject: Project, private val myBuildDirectory: String, private val myRunner: Runnable?) : Thread() {
+class CoverageThread(private val myProject: Project, private val myBuildDirectory: String,private val toolchain: CPPToolchains.Toolchain, private val myRunner: Runnable?) : Thread() {
     private val myData = CoverageData.getInstance(myProject)
     private val myLinesSaid = HashSet<List<String>>()
 
@@ -23,7 +24,7 @@ class CoverageThread(private val myProject: Project, private val myBuildDirector
         name = "CoverageThread"
     }
 
-    private fun generateGCDA(gcda: File) {
+    private fun generateGCDA(gcda: File):Boolean {
         try {
             var lines = mutableListOf<String>()
             val nullFile = if (System.getProperty("os.name").startsWith("Windows")) {
@@ -31,8 +32,18 @@ class CoverageThread(private val myProject: Project, private val myBuildDirector
             } else {
                 "/dev/zero"
             }
-            val path = GCovSettings.getInstance(myProject).gcovPath
-            val builder = ProcessBuilder(path, "-i", "-m", "-b", gcda.toString()).run {
+            val path = GCovSettings.getInstance().getGCovPathForToolchain(toolchain)?.gcovPath
+            if(path == null) {
+                val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+                        .createNotification("No GCov specified for toolchain $toolchain", NotificationType.ERROR)
+                Notifications.Bus.notify(notification, myProject)
+                return false
+            }
+            val builder = if (toolchain.toolSetKind == CPPToolSet.Kind.WSL){
+                ProcessBuilder(toolchain.toolSetPath,"run",path, "-i", "-m", "-b", gcda.name.toString())
+            }else{
+                ProcessBuilder(path, "-i", "-m", "-b", gcda.name.toString())
+            }.run {
                 directory(gcda.parentFile)
                 redirectOutput(File(nullFile))
                 redirectErrorStream(false)
@@ -67,20 +78,33 @@ class CoverageThread(private val myProject: Project, private val myBuildDirector
                     .createNotification("Process timed out", NotificationType.ERROR)
             Notifications.Bus.notify(notification, myProject)
         }
+        return true
     }
 
     private fun parseGCov(lines: List<String>) {
         var functionsSet = false
-        val version = GCovSettings.getInstance(myProject).version
+        val version = GCovSettings.getInstance().getGCovPathForToolchain(toolchain)?.version
+        if(version == null) {
+            val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+                    .createNotification("No GCov specified for toolchain $toolchain", NotificationType.ERROR)
+            Notifications.Bus.notify(notification, myProject)
+            return
+        }
+        val wsl = toolchain.wsl
         var currentFile: CoverageFileData? = null
         loop@ for (line in lines) {
             val substring = line.substring(line.indexOf(':') + 1)
             when (line.substring(0, line.indexOf(':'))) {
                 "file" -> {
-                    currentFile = myData.getCoverageFromPath(substring)
+                    currentFile = myData.getCoverageFromPath(wsl?.toLocalPath(null,substring)?.replace('\\','/')
+                            ?: substring)
                     if (currentFile == null) {
-                        currentFile = CoverageFileData(substring)
-                        myData.setCoverageForPath(substring, currentFile)
+                        currentFile = if (wsl == null) {
+                            CoverageFileData(substring)
+                        } else {
+                            CoverageFileData(wsl.toLocalPath(null,substring).replace('\\','/'))
+                        }
+                        myData.setCoverageForPath(currentFile.filePath, currentFile)
                     }
                 }
                 "function" -> {
@@ -89,16 +113,16 @@ class CoverageThread(private val myProject: Project, private val myBuildDirector
                         break@loop
                     }
                     val list = substring.split(',')
-
+                    //We are currently skipping execution count when reading
                     functionsSet = false
                     if(version == 8) {
                         val startLine = Integer.parseInt(list[0])
                         val endLine = Integer.parseInt(list[1])
-                        val function = list.drop(3).fold("") { lhs, rhs -> lhs + rhs }
+                        val function = list.drop(3).fold("") {lhs,rhs -> if(lhs.isEmpty())rhs else "$lhs,$rhs" }
                         currentFile.emplaceFunction(startLine, endLine, function)
                     } else {
                         val startLine = Integer.parseInt(list[0])
-                        val function = list.drop(2).fold("") {lhs,rhs -> lhs + rhs}
+                        val function = list.drop(2).fold("") {lhs,rhs -> if(lhs.isEmpty())rhs else "$lhs,$rhs" }
                         currentFile.emplaceFunction(startLine,-1,function)
                     }
                 }
@@ -149,7 +173,11 @@ class CoverageThread(private val myProject: Project, private val myBuildDirector
                     }
                     else -> false
                 }
-            }.toList().forEach(::generateGCDA)
+            }.toList().forEach{
+                if(!generateGCDA(it)) {
+                    return@run
+                }
+            }
 
             File(myBuildDirectory).walkTopDown().asSequence().filter {
                 it.isFile && it.name.endsWith(".gcov")

@@ -1,8 +1,6 @@
 package gcov.action
 
 import com.intellij.execution.*
-import gcov.messaging.CoverageProcessEnded
-import gcov.notification.GCovNotification
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ExecutionEnvironment
@@ -11,13 +9,15 @@ import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.cmake.CMakeSettings
-
+import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
+import gcov.messaging.CoverageProcessEnded
+import gcov.notification.GCovNotification
 import java.nio.file.Files
 import java.nio.file.Paths
-import java.util.HashSet
+import java.util.*
 
 /**
  * Coverage button and menu option
@@ -82,9 +82,18 @@ class CoverageButton : AnAction() {
                 null
             }
 
-            if (buildDirectory == null) {
+            if (buildDirectory == null || profile == null) {
                 val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
                         .createNotification("Error getting build directory for cmake profile $target", NotificationType.ERROR)
+                Notifications.Bus.notify(notification, env.project)
+                return
+            }
+
+            val toolChains = CPPToolchains.getInstance()
+            val thisToolChain = toolChains.getToolchainByNameOrDefault(profile.toolchainName)
+            if (thisToolChain == null) {
+                val notification = GCovNotification.GROUP_DISPLAY_ID_INFO
+                        .createNotification("Error fetching toolchain for cmake profile $target", NotificationType.ERROR)
                 Notifications.Bus.notify(notification, env.project)
                 return
             }
@@ -93,7 +102,7 @@ class CoverageButton : AnAction() {
                 buildDirectory =  "${env.project.basePath}/$buildDirectory"
             }
             val publisher = env.project.messageBus.syncPublisher(CoverageProcessEnded.GCOVERAGE_RUN_ENDED_TOPIC)
-            publisher.ended(buildDirectory)
+            publisher.ended(buildDirectory,thisToolChain)
         }
     }
 
@@ -157,5 +166,7 @@ class CoverageButton : AnAction() {
     companion object {
 
         private val myHandler = ProcessEndHandler()
+
+        private val log = Logger.getInstance(CoverageButton::class.java)
     }
 }
