@@ -7,15 +7,14 @@ import com.intellij.openapi.ui.TextBrowseFolderListener;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.ui.JBColor;
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains;
+import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener;
 import gcov.state.GCovSettings;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Vector;
+import java.util.*;
 
 public class GCovSettingsWindow implements Configurable {
     @NotNull
@@ -50,6 +49,24 @@ public class GCovSettingsWindow implements Configurable {
     @Override
     public @Nullable JComponent createComponent() {
         updateToolChain();
+        m_project.getMessageBus().connect().subscribe(CPPToolchainsListener.TOPIC, new CPPToolchainsListener() {
+            @Override
+            public void toolchainsRenamed(@NotNull Map<String, String> renamed) {
+                GCovSettings instance = GCovSettings.Companion.getInstance();
+                for (Map.Entry<String,String> renames : renamed.entrySet()) {
+                    GCovSettings.GCov previousValue = instance.removeGCovPathForToolchain(renames.getKey());
+                    if(previousValue != null) {
+                        instance.putGCovPathForToolchain(renames.getValue(),previousValue.getGcovPath());
+                    }
+                }
+                updateToolChain();
+            }
+
+            @Override
+            public void toolchainCMakeEnvironmentChanged(@NotNull Set<CPPToolchains.Toolchain> toolchains) {
+                updateToolChain();
+            }
+        });
         m_comboBox.addActionListener(e -> {
             if (!(e.getSource() instanceof JComboBox)) {
                 return;

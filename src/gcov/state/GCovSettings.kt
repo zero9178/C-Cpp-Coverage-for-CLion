@@ -8,7 +8,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 
-@State(name = "GCoveragePath",storages = [Storage("gcov.xml",roamingType = RoamingType.DISABLED)])
+@State(name = "GCoveragePath", storages = [Storage("gcov.xml", roamingType = RoamingType.DISABLED)])
 class GCovSettings : PersistentStateComponent<GCovSettings> {
 
     @com.intellij.util.xmlb.annotations.Property
@@ -44,7 +44,7 @@ class GCovSettings : PersistentStateComponent<GCovSettings> {
             valid = true
             errorString = ""
             val toolChain = CPPToolchains.getInstance().getToolchainByNameOrDefault(toolchain)
-            if(toolChain == null) {
+            if (toolChain == null) {
                 valid = false
                 errorString = "Could not determine associated toolchain"
                 return
@@ -61,7 +61,7 @@ class GCovSettings : PersistentStateComponent<GCovSettings> {
             }
             val lines = mutableListOf<String>()
             val builder = if (kind == CPPToolSet.Kind.WSL) {
-                ProcessBuilder(toolChain.toolSetPath,"run",gcovPath,"--version").run {
+                ProcessBuilder(toolChain.toolSetPath, "run", gcovPath, "--version").run {
                     redirectErrorStream(false)
                 }
             } else {
@@ -99,7 +99,7 @@ class GCovSettings : PersistentStateComponent<GCovSettings> {
 
     fun getGCovPathForToolchain(toolchain: String): GCov? = myGcovs[toolchain]
 
-    fun getGCovPathForToolchain(toolchain: CPPToolchains.Toolchain): GCov? = myGcovs[toolchain.name]
+    fun getGCovPathForToolchain(toolchain: CPPToolchains.Toolchain): GCov? = getGCovPathForToolchain(toolchain.name)
 
     fun putGCovPathForToolchain(toolchain: String, path: String): GCov {
         val gcov = myGcovs.getOrPut(toolchain) {
@@ -112,6 +112,10 @@ class GCovSettings : PersistentStateComponent<GCovSettings> {
     }
 
     fun putGCovPathForToolchain(toolchain: CPPToolchains.Toolchain, path: String): GCov = putGCovPathForToolchain(toolchain.name, path)
+
+    fun removeGCovPathForToolchain(toolchain: String) = myGcovs.remove(toolchain)
+
+    fun removeGCovPathForToolchain(toolchain: CPPToolchains.Toolchain) = removeGCovPathForToolchain(toolchain.name)
 
     override fun getState(): GCovSettings = this
 
