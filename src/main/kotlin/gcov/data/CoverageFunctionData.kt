@@ -1,6 +1,6 @@
 package gcov.data
 
-import java.util.TreeMap
+import java.util.*
 
 class CoverageFunctionData(var startLine: Int = -1, internal var endLine: Int = -1, var functionName: String = "<unknown function>") {
 

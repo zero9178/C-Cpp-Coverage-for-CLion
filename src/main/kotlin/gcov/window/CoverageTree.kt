@@ -1,7 +1,5 @@
 package gcov.window
 
-import gcov.data.CoverageFileData
-import gcov.data.CoverageFunctionData
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
@@ -11,15 +9,16 @@ import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns
 import com.intellij.ui.treeStructure.treetable.TreeColumnInfo
 import com.intellij.ui.treeStructure.treetable.TreeTable
 import com.intellij.util.ui.ColumnInfo
+import gcov.data.CoverageFileData
+import gcov.data.CoverageFunctionData
 import org.jetbrains.annotations.Contract
-
-import javax.swing.*
-import javax.swing.table.TableCellRenderer
-import javax.swing.tree.DefaultMutableTreeNode
-import java.awt.*
+import java.awt.Component
 import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
 import java.io.File
+import javax.swing.JProgressBar
+import javax.swing.table.TableCellRenderer
+import javax.swing.tree.DefaultMutableTreeNode
 
 /**
  * Class acting as the model for the treeTable inside the GCovWindowFactory tool window

@@ -1,7 +1,6 @@
 package gcov.data
 
-import java.util.HashMap
-import java.util.TreeMap
+import java.util.*
 
 class CoverageFileData(val filePath: String) {
     private val myLineData: MutableMap<Int, CoverageLineData> = HashMap()

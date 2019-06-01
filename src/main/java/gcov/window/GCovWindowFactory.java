@@ -1,18 +1,17 @@
 package gcov.window;
 
-import gcov.data.CoverageData;
-import gcov.data.CoverageThread;
-import gcov.messaging.CoverageProcessEnded;
-import gcov.state.EditorState;
-import gcov.state.ShowNonProjectSourcesState;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowFactory;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentFactory;
+import gcov.data.CoverageData;
+import gcov.data.CoverageThread;
+import gcov.messaging.CoverageProcessEnded;
+import gcov.state.EditorState;
+import gcov.state.ShowNonProjectSourcesState;
 import org.jetbrains.annotations.NotNull;
-import com.jetbrains.cidr.cpp.toolchains.CPPToolchains;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
