@@ -1,4 +1,4 @@
-package gcov.data
+package net.zero9178.gcov.data
 
 import java.util.*
 

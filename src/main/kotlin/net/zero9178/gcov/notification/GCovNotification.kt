@@ -1,4 +1,4 @@
-package gcov.notification
+package net.zero9178.gcov.notification
 
 import com.intellij.notification.NotificationDisplayType
 import com.intellij.notification.NotificationGroup

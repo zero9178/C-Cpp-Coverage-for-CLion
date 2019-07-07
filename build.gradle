@@ -1,6 +1,6 @@
 plugins {
     id 'java'
-    id 'org.jetbrains.intellij' version '0.4.8'
+    id 'org.jetbrains.intellij' version '0.4.9'
     id 'org.jetbrains.kotlin.jvm' version '1.3.31'
 }
 
@@ -21,7 +21,10 @@ dependencies {
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
     version 'CL-2019.1.3'
-    downloadSources false
+    downloadSources true
+}
+runIde {
+    jvmArgs '-Xmx2G'
 }
 compileKotlin {
     kotlinOptions.jvmTarget = "1.8"
@@ -31,6 +34,13 @@ compileTestKotlin {
 }
 patchPluginXml {
     changeNotes """
-      Add change notes here.<br>
-      <em>most HTML tags may be used</em>"""
+      1.1.3:Fixed bug with Coverage not working on Mac OS X. GCov now application wide and Configurable per Toolchain. WSL now supported.<br/>
+      1.1.2:Fixed bug with Coverage not working in Linux and on older versions of GCC. Supported versions of gcov are now 4.8 to 8.2.<br/>
+      1.1.1:Fixed bug with Coverage not running after normal application exit. Filepaths are now relative to project root if only showing project sources<br/>
+      1.1:  Fixed bug with Coverage not working during tests. Fixed bug with incorrect File coverage displayed. Added clear button<br/>
+      1.0:  Initial Release</br>"""
+    description """
+      C++ Coverage gatherer for GCC and Clang
+"""
+    version 2
 }

@@ -12,3 +12,6 @@ rest-client.private.env.json
 http-client.private.env.json
 
 /.gradle
+# Project exclude paths
+/build/
+/build/classes/java/main/

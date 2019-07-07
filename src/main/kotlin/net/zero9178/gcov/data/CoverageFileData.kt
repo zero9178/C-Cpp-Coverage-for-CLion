@@ -1,4 +1,4 @@
-package gcov.data
+package net.zero9178.gcov.data
 
 import java.util.*
 
@@ -8,7 +8,7 @@ class CoverageFileData(val filePath: String) {
     var functionData: MutableMap<String, CoverageFunctionData> = TreeMap()
         internal set
 
-    val lineData: MutableMap<Int,CoverageLineData>
+    val lineData: MutableMap<Int, CoverageLineData>
         get() = myLineData
 
     fun emplaceFunction(startLine: Int, endLine: Int, functionName: String) {
@@ -24,7 +24,10 @@ class CoverageFileData(val filePath: String) {
     }
 
     fun functionFromLine(line: Int): CoverageFunctionData =
-            functionData.values.find{ it.lineIsInFunction(line) } ?: functionData.getOrDefault("<unknown function>", CoverageFunctionData(this))
+        functionData.values.find { it.lineIsInFunction(line) } ?: functionData.getOrDefault(
+            "<unknown function>",
+            CoverageFunctionData(this)
+        )
 
     fun getLineDataAt(line: Int): CoverageLineData? = myLineData[line]
 }

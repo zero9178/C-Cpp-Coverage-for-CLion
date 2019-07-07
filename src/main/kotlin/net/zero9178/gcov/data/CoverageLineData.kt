@@ -1,4 +1,4 @@
-package gcov.data
+package net.zero9178.gcov.data
 
 class CoverageLineData(val lineNumber: Int, executionCount: Int) {
     var executionCount: Int = executionCount

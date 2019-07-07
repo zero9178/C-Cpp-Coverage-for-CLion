@@ -4,19 +4,6 @@
     <version>1.1.3</version>
     <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
 
-    <description><![CDATA[
-      GCoverage for CLion
-    ]]></description>
-
-    <change-notes><![CDATA[
-      1.1.3:Fixed bug with Coverage not working on Mac OS X. GCov now application wide and Configurable per Toolchain. WSL now supported.<br/>
-      1.1.2:Fixed bug with Coverage not working in Linux and on older versions of GCC. Supported versions of gcov are now 4.8 to 8.2.<br/>
-      1.1.1:Fixed bug with Coverage not running after normal application exit. Filepaths are now relative to project root if only showing project sources<br/>
-      1.1:  Fixed bug with Coverage not working during tests. Fixed bug with incorrect File coverage displayed. Added clear button<br/>
-      1.0:  Initial Release</br>
-    ]]>
-    </change-notes>
-
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
     <idea-version since-build="173.0"/>
 
@@ -28,34 +15,22 @@
 
     <depends>com.intellij.modules.clion</depends>
     <depends>com.intellij.modules.lang</depends>
-
-    <actions>
-        <action id="gcov.action.CoverageButton" class="gcov.action.CoverageButton" text="Coverage"
-                description="Run with GCoverage" icon="CoverageIcons.COVERAGE_RUNNER">
-            <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
-            <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
-        </action>
-    </actions>
+    <depends>com.intellij.modules.coverage</depends>
 
     <project-components>
         <component>
-            <interface-class>gcov.data.CoverageData</interface-class>
-            <implementation-class>gcov.data.CoverageData</implementation-class>
+            <implementation-class>net.zero9178.gcov.data.CoverageData</implementation-class>
             <loadForDefaultProject/>
         </component>
     </project-components>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="GCoverage" anchor="right" factoryClass="gcov.window.GCovWindowFactory"
-                    icon="CoverageIcons.COVERAGE_RUNNER"/>
-        <codeInsight.lineMarkerProvider language="ObjectiveC" implementationClass="gcov.lineMarker.CoverageLineMarker"/>
-        <projectService serviceInterface="gcov.state.EditorState" serviceImplementation="gcov.state.EditorState"/>
-        <projectService serviceInterface="gcov.state.ShowNonProjectSourcesState"
-                        serviceImplementation="gcov.state.ShowNonProjectSourcesState"/>
-        <applicationService serviceInterface="gcov.state.GCovSettings" serviceImplementation="gcov.state.GCovSettings"/>
-        <projectConfigurable groupId="tools" id="GCoverage.settings" instance="gcov.window.GCovSettingsWindow"
-                             displayName="GCoverage"/>
+
         <!-- Add your extensions here -->
+    </extensions>
+
+    <extensions defaultExtensionNs="cidr">
+        <runConfigurationExtension implementation="net.zero9178.gcov.CoverageConfigurationExtension"/>
     </extensions>
 
 </idea-plugin>
