@@ -9,6 +9,7 @@ import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener
 import com.jetbrains.cidr.cpp.toolchains.MinGW
+import com.jetbrains.cidr.cpp.toolchains.NativeUnixToolSet
 import com.jetbrains.cidr.toolchains.OSType
 import net.zero9178.cov.data.CoverageGenerator
 import net.zero9178.cov.data.getGeneratorFor
@@ -119,10 +120,10 @@ class CoverageGeneratorPaths : PersistentStateComponent<CoverageGeneratorPaths.S
 
 private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchain): CoverageGeneratorPaths.GeneratorInfo {
     val toolset = toolchain.toolSet ?: return CoverageGeneratorPaths.GeneratorInfo()
-    val compiler =
+    var compiler =
         toolchain.customCXXCompilerPath ?: System.getenv("CXX")?.ifBlank { System.getenv("CC") }
     //Lets not deal with WSL yet
-    return if (toolset is MinGW) {
+    return if (toolset is MinGW || toolset is NativeUnixToolSet) {
 
         val findExe = { prefix: String, name: String, suffix: String, extraPath: Path ->
             val insideSameDir = extraPath.toFile().listFiles()?.asSequence()?.map {
@@ -165,30 +166,31 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
                 CoverageGeneratorPaths.GeneratorInfo(covPath, profPath)
             }
         } else if (compiler == null) {
-            //TODO: Check if this works on Linux. If not try to look on path
-            val path = toolset.home.toPath().resolve("bin")
-                .resolve(if (OSType.getCurrent() == OSType.WIN) "gcov.exe" else "gcov")
-            if (path.exists()) {
-                CoverageGeneratorPaths.GeneratorInfo(path.toString())
-            } else {
-                CoverageGeneratorPaths.GeneratorInfo()
+            if (toolset is MinGW) {
+                val path = toolset.home.toPath().resolve("bin")
+                    .resolve(if (OSType.getCurrent() == OSType.WIN) "gcov.exe" else "gcov")
+                return if (path.exists()) {
+                    CoverageGeneratorPaths.GeneratorInfo(path.toString())
+                } else {
+                    CoverageGeneratorPaths.GeneratorInfo()
+                }
             }
+            compiler = "/usr/bin/gcc"
+        }
+
+        val compilerName = Paths.get(compiler).fileName.toString()
+
+        val gccName = if (compilerName.contains("g++")) "g++" else "gcc"
+
+        val prefix = compilerName.substringBefore(gccName)
+
+        val suffix = compilerName.substringAfter(gccName)
+
+        val gcovPath = findExe(prefix, "gcov", suffix, Paths.get(compiler).parent)
+        if (gcovPath != null) {
+            CoverageGeneratorPaths.GeneratorInfo(gcovPath)
         } else {
-
-            val compilerName = Paths.get(compiler).fileName.toString()
-
-            val gccName = if (compilerName.contains("g++")) "g++" else "gcc"
-
-            val prefix = compilerName.substringBefore(gccName)
-
-            val suffix = compilerName.substringAfter(gccName)
-
-            val gcovPath = findExe(prefix, "gcov", suffix, Paths.get(compiler).parent)
-            if (gcovPath != null) {
-                CoverageGeneratorPaths.GeneratorInfo(gcovPath)
-            } else {
-                CoverageGeneratorPaths.GeneratorInfo()
-            }
+            CoverageGeneratorPaths.GeneratorInfo()
         }
     } else {
         CoverageGeneratorPaths.GeneratorInfo()

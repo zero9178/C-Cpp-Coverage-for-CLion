@@ -146,18 +146,29 @@ private class LLVMCoverageGenerator(override val executable: String, val llvmPro
                 }
             }).parse<Root>(jsonContent) ?: return CoverageData(emptyMap())
 
+        operator fun <A, B> Pair<A, B>.compareTo(pair: Pair<B, B>): Int {
+            TODO()
+            return 0
+        }
+
         root.data.map { data ->
             data.files.map { file ->
                 CoverageFileData(
                     file.filename,
                     data.functions.filter { it.filenames.contains(file.filename) }.map { function ->
-                        CoverageFunctionData(0, 0, function.name, FunctionRegionData(function.regions.map {
-                            FunctionRegionData.Region(
-                                it.lineStart to it.columnStart,
-                                it.lineEnd to it.columnEnd,
-                                it.executionCount
-                            )
-                        }), emptyList())
+
+                        val filterRegions = function.regions.filter { it.regionKind != 3 }
+                        val result = mutableListOf<FunctionRegionData.Region>()
+                        filterRegions.forEach { region ->
+                            val element = result.lastOrNull { it.startPos > (region.lineStart to region.columnStart) }
+                        }
+                        CoverageFunctionData(
+                            0,
+                            0,
+                            function.name,
+                            FunctionRegionData(result),
+                            emptyList()
+                        )
                     }.associateBy { it.functionName })
             }
         }
@@ -173,11 +184,15 @@ private class LLVMCoverageGenerator(override val executable: String, val llvmPro
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return null
 
+        val files = config.configurationGenerationDir.listFiles()
+            ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
+
         val llvmProf = ProcessBuilder().command(
-            llvmProf,
-            "merge",
-            "-output=${config.target.name}.profdata",
-            "${config.target.name}-*.profraw"
+            listOf(
+                llvmProf,
+                "merge",
+                "-output=${config.target.name}.profdata"
+            ) + files.map { it.absolutePath }
         ).directory(config.configurationGenerationDir).start()
         var retCode = llvmProf.waitFor()
         var lines = llvmProf.errorStream.bufferedReader().readLines()
