@@ -8,7 +8,9 @@ import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.process.ProcessListener
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.execution.CidrBuildTarget
@@ -18,9 +20,15 @@ import com.jetbrains.cidr.execution.ConfigurationExtensionContext
 import com.jetbrains.cidr.lang.CLanguageKind
 import com.jetbrains.cidr.lang.toolchains.CidrCompilerSwitches
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
+import net.zero9178.cov.data.CoverageFileData
+import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.CoverageGenerator
+import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorPaths
+import net.zero9178.cov.window.CoverageView
+import java.nio.file.Paths
+import javax.swing.tree.DefaultMutableTreeNode
 
 class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
     override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>) = true
@@ -88,6 +96,38 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                     )
                         ?: return
 
+                val resolver = configuration.getResolveConfiguration(executionTarget)
+                val root = DefaultMutableTreeNode("invisible-root")
+                for ((_, value) in data.files) {
+                    val fileNode = object : DefaultMutableTreeNode(value) {
+                        override fun toString(): String {
+                            val filePath = (userObject as? CoverageFileData)?.filePath ?: return userObject.toString()
+                            val basePath = configuration.project.basePath ?: return filePath
+                            return if (resolver?.sources?.contains(
+                                    LocalFileSystem.getInstance().findFileByPath(
+                                        environment.toLocalPath(filePath)
+                                    )
+                                ) == true
+                            ) {
+                                Paths.get(basePath).relativize(Paths.get(filePath)).toString()
+                            } else {
+                                filePath
+                            }
+                        }
+                    }
+
+                    root.add(fileNode)
+                    for (function in value.functions.values) {
+                        fileNode.add(object : DefaultMutableTreeNode(function) {
+                            override fun toString() =
+                                (userObject as? CoverageFunctionData)?.functionName ?: userObject.toString()
+                        })
+                    }
+                }
+                CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
+                ApplicationManager.getApplication().invokeLater {
+                    CoverageView.getInstance(configuration.project).setRoot(root)
+                }
             }
 
             override fun processWillTerminate(event: ProcessEvent, willBeDestroyed: Boolean) {}

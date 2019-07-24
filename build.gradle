@@ -45,5 +45,5 @@ patchPluginXml {
     description """
       C++ Coverage gatherer for GCC and Clang
 """
-    version 2
+    version "2.0.0"
 }

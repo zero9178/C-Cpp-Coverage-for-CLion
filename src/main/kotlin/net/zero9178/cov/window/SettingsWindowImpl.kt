@@ -2,7 +2,6 @@ package net.zero9178.cov.window
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.vfs.VirtualFile
@@ -14,8 +13,6 @@ import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.nio.file.Paths
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.TimeUnit
 import javax.swing.DefaultComboBoxModel
 
 class SettingsWindowImpl : SettingsWindow() {
@@ -142,57 +139,33 @@ class SettingsWindowImpl : SettingsWindow() {
     }
 
     private fun updateLLVMFields() {
-        setLoading(true)
-        isLLVMCovAsync(m_gcovOrllvmCovBrowser.text).whenComplete { t, u ->
-            ApplicationManager.getApplication().invokeLater({
-                setLoading(false)
-            }, ModalityState.stateForComponent(createComponent()))
-            if (u != null) {
-                m_errors.text = u.cause?.message ?: ""
-                m_errors.icon = AllIcons.General.Warning
-            } else if (t != null) {
-                m_errors.text = ""
-                m_errors.icon = null
-                m_llvmProfLabel.isVisible = t
-                m_llvmProfdataBrowser.isVisible = t
-                m_gcovOrLLVMCovLabel.text = if (t) "llvm-cov:" else "gcov:"
-            }
+        if (m_gcovOrllvmCovBrowser.text.isBlank()) {
+            m_errors.text = "No executable specified"
+            m_errors.icon = AllIcons.General.Warning
+            m_llvmProfLabel.isVisible = false
+            m_llvmProfdataBrowser.isVisible = false
+            return
         }
+        if (!Paths.get(m_gcovOrllvmCovBrowser.text).exists()) {
+            m_errors.text = "'${m_gcovOrllvmCovBrowser.text}' is not a valid path to an executable"
+            m_errors.icon = AllIcons.General.Warning
+            m_llvmProfLabel.isVisible = false
+            m_llvmProfdataBrowser.isVisible = false
+            return
+        }
+        if (!m_gcovOrllvmCovBrowser.text.contains("(llvm-cov|gcov)".toRegex(RegexOption.IGNORE_CASE))) {
+            m_errors.text = "'${m_gcovOrllvmCovBrowser.text}' is neither gcov nor llvm-cov"
+            m_errors.icon = AllIcons.General.Warning
+            m_llvmProfLabel.isVisible = false
+            m_llvmProfdataBrowser.isVisible = false
+            return
+        }
+        m_errors.text = ""
+        m_errors.icon = null
+        m_llvmProfLabel.isVisible = m_gcovOrllvmCovBrowser.text.contains("llvm-cov", true)
+        m_llvmProfdataBrowser.isVisible = m_llvmProfLabel.isVisible
+        m_gcovOrLLVMCovLabel.text = if (m_llvmProfLabel.isVisible) "llvm-cov:" else "gcov:"
     }
-
-    private fun isLLVMCovAsync(executable: String) = CompletableFuture.supplyAsync {
-        if (executable.isBlank()) {
-            throw Exception("No executable specified")
-        }
-        if (!Paths.get(executable).exists()) {
-            throw Exception("'$executable' is not a valid path to an executable")
-        }
-        val p = ProcessBuilder(executable, "--version").start()
-        val lines = p.inputStream.bufferedReader().readLines()
-        if (!p.waitFor(5, TimeUnit.SECONDS)) {
-            p.destroyForcibly()
-            throw Exception("Process timed out")
-        }
-        val retCode = p.exitValue()
-        if (retCode != 0) {
-            val stderrOutput = p.errorStream.bufferedReader().readLines()
-            throw Exception(
-                "Executable failed with error code $retCode and error output:\n ${stderrOutput.joinToString(
-                    "\n"
-                )}"
-            )
-        } else {
-            val isllvmCov = lines[0].contains("LLVM", true)
-            val isGCov = lines[0].contains("gcov", true)
-            if (isllvmCov) {
-                true
-            } else if (!isGCov) {
-                throw Exception("Executable identified as neither gcov or llvm-cov")
-            } else {
-                false
-            }
-        }
-    }!!
 
     private val myEditorState: MutableMap<String, CoverageGeneratorPaths.GeneratorInfo> =
         CoverageGeneratorPaths.getInstance().paths.mapValues { it.value.copy() }.toMutableMap()
