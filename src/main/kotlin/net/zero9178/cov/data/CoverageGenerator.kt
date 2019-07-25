@@ -11,7 +11,6 @@ import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
@@ -20,11 +19,11 @@ import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
-import com.jetbrains.cidr.lang.psi.OCDoWhileStatement
+import com.jetbrains.cidr.lang.psi.OCForStatement
 import com.jetbrains.cidr.lang.psi.OCIfStatement
 import com.jetbrains.cidr.lang.psi.OCLoopStatement
-import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
-import com.jetbrains.cidr.lang.util.OCElementUtil
+import com.jetbrains.cidr.lang.psi.OCStatement
+import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -102,7 +101,20 @@ private class LLVMCoverageGenerator(override val executable: String, val llvmPro
         }
     }
 
-    private fun processJson(jsonContent: String): CoverageData {
+    private operator fun <A : Comparable<A>, B : Comparable<B>> Pair<A, B>.compareTo(pair: Pair<A, B>): Int {
+        val result = first.compareTo(pair.first)
+        return if (result != 0) {
+            result
+        } else {
+            second.compareTo(pair.second)
+        }
+    }
+
+    private fun processJson(
+        jsonContent: String,
+        environment: CPPEnvironment,
+        project: Project
+    ): CoverageData {
         val root = Klaxon()
             .converter(object : Converter {
                 override fun canConvert(cls: Class<*>) = cls == Segment::class.java
@@ -146,33 +158,158 @@ private class LLVMCoverageGenerator(override val executable: String, val llvmPro
                 }
             }).parse<Root>(jsonContent) ?: return CoverageData(emptyMap())
 
-        operator fun <A, B> Pair<A, B>.compareTo(pair: Pair<B, B>): Int {
-            TODO()
-            return 0
-        }
-
-        root.data.map { data ->
+        return CoverageData(root.data.map { data ->
             data.files.map { file ->
+                val entries = file.segments.filter { it.isRegionEntry }
                 CoverageFileData(
-                    file.filename,
-                    data.functions.filter { it.filenames.contains(file.filename) }.map { function ->
+                    environment.toLocalPath(file.filename).replace('\\', '/'),
+                    data.functions.filter { it.filenames.contains(file.filename) && it.regions.isNotEmpty() }.map { function ->
 
-                        val filterRegions = function.regions.filter { it.regionKind != 3 }
-                        val result = mutableListOf<FunctionRegionData.Region>()
-                        filterRegions.forEach { region ->
-                            val element = result.lastOrNull { it.startPos > (region.lineStart to region.columnStart) }
-                        }
+                        val regions = function.regions.filter { it.regionKind != Region.GAP }
+                        val branches =
+                            regions.filter { region -> entries.any { (it.line to it.column) == (region.lineStart to region.columnStart) } }
                         CoverageFunctionData(
-                            0,
-                            0,
+                            function.regions.first().lineStart,
+                            function.regions.first().lineEnd,
                             function.name,
-                            FunctionRegionData(result),
-                            emptyList()
+                            FunctionRegionData(regions.map { region ->
+                                FunctionRegionData.Region(
+                                    region.lineStart to region.columnStart,
+                                    region.lineEnd to region.columnEnd,
+                                    region.executionCount
+                                )
+                            }),
+                            findStatementsForBranches(
+                                branches,
+                                regions,
+                                environment.toLocalPath(file.filename),
+                                project
+                            )
                         )
                     }.associateBy { it.functionName })
             }
+        }.flatten().associateBy { it.filePath })
+    }
+
+    private fun findStatementsForBranches(
+        regionEntries: List<Region>,
+        allRegions: List<Region>,
+        file: String,
+        project: Project
+    ): List<CoverageBranchData> {
+        if (regionEntries.isEmpty()) {
+            return emptyList()
         }
-        return CoverageData(emptyMap())
+        return ApplicationManager.getApplication().runReadAction<List<CoverageBranchData>> {
+            val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return@runReadAction emptyList()
+            val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return@runReadAction emptyList()
+            val document =
+                PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return@runReadAction emptyList()
+            /**
+             * We must filter out the increment expression in a for loop. This is due to it not actually being executed as
+             * many times as the containing statement.
+             *
+             * Consider the case:
+             * for(int i = 0; i < 5; i++) {
+             *      if(i > 2) {
+             *          ...
+             *      }
+             *      break;
+             * }
+             *
+             * Due to the break the i++ is never executed yet the if was giving us a false delta and therefore false
+             * branch coverage.
+             * This makes a lot of sense if one turns a for into an equivalent while aka:
+             * {
+             *      int i = 0;
+             *      while(i < 5) {
+             *          if( i > 2) {
+             *              ...
+             *          }
+             *          break;
+             *          i++;
+             *      }
+             * }
+             *
+             */
+            val forIncrements = mutableListOf<OCStatement>()
+            val branches = mutableListOf<Pair<Region, OCStatement>>()
+
+            object : OCRecursiveVisitor() {
+                override fun visitLoopStatement(loop: OCLoopStatement?) {
+                    loop ?: return super.visitLoopStatement(loop)
+                    val body = loop.body ?: return super.visitLoopStatement(loop)
+                    matchStatement(loop, body)
+                    super.visitLoopStatement(loop)
+                }
+
+                override fun visitIfStatement(stmt: OCIfStatement?) {
+                    stmt ?: return super.visitIfStatement(stmt)
+                    val body = stmt.thenBranch ?: return super.visitIfStatement(stmt)
+                    matchStatement(stmt, body)
+                    super.visitIfStatement(stmt)
+                }
+
+                override fun visitForStatement(stmt: OCForStatement?) {
+                    super.visitForStatement(stmt)
+                    stmt ?: return
+                    forIncrements += (stmt.increment ?: return)
+                }
+
+                private fun matchStatement(parent: OCStatement, body: OCStatement) {
+                    branches += regionEntries.filter {
+                        body.textOffset == document.getLineStartOffset(it.lineStart - 1) + it.columnStart - 1
+                    }.map { it to parent }
+                }
+            }.visitElement(psiFile)
+
+
+            val otherRegions = allRegions.filter { region ->
+                forIncrements.none {
+                    val startLine = document.getLineNumber(it.textOffset) + 1
+                    val startColumn = it.textOffset - document.getLineStartOffset(startLine - 1) + 1
+                    region.lineStart == startLine && region.columnStart == startColumn
+                }
+            }
+
+            branches.map { it.first to it.second as PsiElement }
+                .fold(emptyList<Pair<CoverageBranchData, PsiElement>>()) { list, (region, element) ->
+
+                    val (above, after) = {
+                        val startLine = document.getLineNumber(element.textOffset) + 1
+                        val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
+
+                        val endLine = document.getLineNumber(element.textRange.endOffset) + 1
+                        val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
+
+                        otherRegions.findLast { (it.lineStart to it.columnStart) < (startLine to startColumn) } to
+                                otherRegions.findLast { (it.lineEnd to it.columnEnd) > (endLine to endColumn) }
+                    }()
+
+                    if (above == null) {
+                        list
+                    } else {
+
+                        val startLine = document.getLineNumber(element.firstChild.textRange.endOffset) + 1
+                        val startColumn =
+                            element.firstChild.textRange.endOffset - document.getLineStartOffset(startLine - 1) + 1
+
+                        val ifStat = list.lastOrNull()?.second as? OCIfStatement
+                        if (ifStat == null || ifStat.elseBranch != element) {
+                            list + (CoverageBranchData(
+                                startLine to startColumn, region.executionCount.toInt(),
+                                (if (above.executionCount >= region.executionCount) above.executionCount - region.executionCount else after?.executionCount
+                                    ?: 1).toInt()
+                            ) to element)
+                        } else {
+                            list + (CoverageBranchData(
+                                startLine to startColumn, region.executionCount.toInt(),
+                                (list.last().first.skippedCount - region.executionCount).toInt()
+                            ) to element)
+                        }
+                    }
+                }.map { it.first }
+        }
     }
 
     override fun generateCoverage(
@@ -227,7 +364,7 @@ private class LLVMCoverageGenerator(override val executable: String, val llvmPro
             return null
         }
 
-        return processJson(lines.joinToString())
+        return processJson(lines.joinToString(), environment, configuration.project)
     }
 }
 
@@ -264,13 +401,12 @@ private class GCCJSONCoverageGenerator(override val executable: String) : Covera
 
     private fun processJson(
         jsonContent: String,
-        env: CPPEnvironment,
-        project: Project
+        env: CPPEnvironment
     ): CoverageData {
         val root = Klaxon().parse<Root>(jsonContent) ?: return CoverageData(emptyMap())
 
         return CoverageData(root.files.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
-            CoverageFileData(file.file, file.functions.map { function ->
+            CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
                 val lines = file.lines.filter {
                     it.functionName == function.name
                 }
@@ -280,88 +416,91 @@ private class GCCJSONCoverageGenerator(override val executable: String) : Covera
                     function.demangledName,
                     FunctionLineData(lines.associate { it.lineNumber to it.count }),
                     lines.map { line ->
-                        findStatementsForBranches(
-                            line.branches.chunked(2).filter { !it.any { branch -> branch.throwing } }.flatten(),
-                            line.lineNumber - 1,
-                            env.toLocalPath(file.file),
-                            project
-                        )
+                        line.branches.chunked(2).filter { !it.any { branch -> branch.throwing } }
+                            .fold(emptyList<CoverageBranchData>()) { result, list ->
+                                val steppedIn = if (list[0].fallthrough) list[0] else list[1]
+                                val skipped = if (list[0].fallthrough) list[1] else list[0]
+                                result + CoverageBranchData(
+                                    line.lineNumber to Int.MAX_VALUE,
+                                    steppedIn.count,
+                                    skipped.count
+                                )
+                            }
                     }.flatten()
                 )
             }.associateBy { it.functionName })
         }.associateBy { it.filePath })
     }
 
-    private fun findStatementsForBranches(
-        branches: List<Branch>,
-        line: Int,
-        file: String,
-        project: Project
-    ): List<CoverageBranchData> {
-        if (branches.isEmpty()) {
-            return emptyList()
-        }
-        return ApplicationManager.getApplication().runReadAction<List<CoverageBranchData>> {
-            val result = mutableListOf<CoverageBranchData>()
-            val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return@runReadAction emptyList()
-            val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return@runReadAction emptyList()
-            val document =
-                PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return@runReadAction emptyList()
-            branches.chunked(2).reversed().forEachIndexed { index, chuncked ->
-                val range = TextRange(document.getLineStartOffset(line), document.getLineEndOffset(line))
-                var pos: Pair<Int, Int>? = null
-                var counter = 0
-                object : OCVisitor() {
-
-                    override fun visitElement(element: PsiElement?) {
-                        super.visitElement(element)
-                        element ?: return
-
-                        var var2: PsiElement? = element.firstChild
-                        while (var2 != null && pos == null) {
-                            if (range.intersects(OCElementUtil.getRangeWithMacros(var2))) {
-                                var2.accept(this)
-                            }
-                            var2 = var2.nextSibling
-                        }
-                    }
-
-                    override fun visitIfStatement(stmt: OCIfStatement?) {
-                        super.visitIfStatement(stmt)
-                        if (stmt != null && range.contains(stmt.firstChild.textOffset)) {
-                            when {
-                                pos == null && counter == index -> {
-                                    val offset = stmt.lParenth?.startOffset ?: return
-                                    val lineNumber = document.getLineNumber(offset)
-                                    pos = 1 + lineNumber to offset - document.getLineStartOffset(lineNumber) + 1
-                                }
-                                else -> counter++
-                            }
-                        }
-                    }
-
-                    override fun visitLoopStatement(loop: OCLoopStatement?) {
-                        super.visitLoopStatement(loop)
-                        if (loop != null && range.contains(if (loop is OCDoWhileStatement) loop.textRange.endOffset else loop.textOffset)) {
-                            when {
-                                pos == null && counter == index -> {
-                                    val offset = loop.lParenth?.startOffset ?: return
-                                    val lineNumber = document.getLineNumber(offset)
-                                    pos = 1 + lineNumber to offset - document.getLineStartOffset(lineNumber) + 1
-                                }
-                                else -> counter++
-                            }
-                        }
-                    }
-                }.visitElement(psiFile)
-                val endPos = pos ?: return@forEachIndexed
-                val steppedIn = if (chuncked[0].fallthrough) chuncked[0] else chuncked[1]
-                val skipped = if (chuncked[0].fallthrough) chuncked[1] else chuncked[0]
-                result += CoverageBranchData(endPos, steppedIn.count, skipped.count)
-            }
-            result
-        }
-    }
+//    private fun findStatementsForBranches(
+//        branches: List<Branch>,
+//        line: Int,
+//        file: String,
+//        project: Project
+//    ): List<CoverageBranchData> {
+//        if (branches.isEmpty()) {
+//            return emptyList()
+//        }
+//        return ApplicationManager.getApplication().runReadAction<List<CoverageBranchData>> {
+//            val result = mutableListOf<CoverageBranchData>()
+//            val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return@runReadAction emptyList()
+//            val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return@runReadAction emptyList()
+//            val document =
+//                PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return@runReadAction emptyList()
+//            branches.chunked(2).reversed().forEachIndexed { index, chuncked ->
+//                val range = TextRange(document.getLineStartOffset(line), document.getLineEndOffset(line))
+//                var pos: Pair<Int, Int>? = null
+//                var counter = 0
+//                object : OCVisitor() {
+//
+//                    override fun visitElement(element: PsiElement?) {
+//                        element ?: return
+//
+//                        var var2: PsiElement? = element.firstChild
+//                        while (var2 != null && pos == null) {
+//                            if (range.intersects(OCElementUtil.getRangeWithMacros(var2))) {
+//                                var2.accept(this)
+//                            }
+//                            var2 = var2.nextSibling
+//                        }
+//                    }
+//
+//                    override fun visitIfStatement(stmt: OCIfStatement?) {
+//                        super.visitIfStatement(stmt)
+//                        if (stmt != null && range.contains(stmt.firstChild.textOffset)) {
+//                            when {
+//                                pos == null && counter == index -> {
+//                                    val offset = stmt.lParenth?.startOffset ?: return
+//                                    val lineNumber = document.getLineNumber(offset)
+//                                    pos = 1 + lineNumber to offset - document.getLineStartOffset(lineNumber) + 1
+//                                }
+//                                else -> counter++
+//                            }
+//                        }
+//                    }
+//
+//                    override fun visitLoopStatement(loop: OCLoopStatement?) {
+//                        super.visitLoopStatement(loop)
+//                        if (loop != null && range.contains(if (loop is OCDoWhileStatement) loop.textRange.endOffset else loop.textOffset)) {
+//                            when {
+//                                pos == null && counter == index -> {
+//                                    val offset = loop.lParenth?.startOffset ?: return
+//                                    val lineNumber = document.getLineNumber(offset)
+//                                    pos = 1 + lineNumber to offset - document.getLineStartOffset(lineNumber) + 1
+//                                }
+//                                else -> counter++
+//                            }
+//                        }
+//                    }
+//                }.visitElement(psiFile)
+//                val endPos = pos ?: return@forEachIndexed
+//                val steppedIn = if (chuncked[0].fallthrough) chuncked[0] else chuncked[1]
+//                val skipped = if (chuncked[0].fallthrough) chuncked[1] else chuncked[0]
+//                result += CoverageBranchData(endPos, steppedIn.count, skipped.count)
+//            }
+//            result
+//        }
+//    }
 
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
@@ -394,7 +533,7 @@ private class GCCJSONCoverageGenerator(override val executable: String) : Covera
 
         files.forEach { Files.deleteIfExists(Paths.get(it)) }
 
-        return processJson(lines.joinToString(), environment, configuration.project)
+        return processJson(lines.joinToString(), environment)
     }
 }
 

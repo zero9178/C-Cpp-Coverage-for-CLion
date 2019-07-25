@@ -38,9 +38,9 @@ class CoverageHighlighter(private val myProject: Project) {
         val highlightManager = HighlightManager.getInstance(myProject)
         val colorScheme = EditorColorsUtil.getGlobalOrDefaultColorScheme()
         val vs = FileDocumentManager.getInstance().getFile(editor.document) ?: return
-        val canonicalPath = vs.canonicalPath ?: return
-        val info = myHighlighting[canonicalPath] ?: return
-        val ranges = myActiveHighlighting.getOrPut(canonicalPath) { mutableListOf() }
+        val path = vs.path
+        val info = myHighlighting[path] ?: return
+        val ranges = myActiveHighlighting.getOrPut(path) { mutableListOf() }
         for ((start, end, covered) in info.highLightedLines) {
             val color =
                 colorScheme.getAttributes(if (covered) CodeInsightColors.LINE_FULL_COVERAGE else CodeInsightColors.LINE_NONE_COVERAGE)
@@ -135,7 +135,13 @@ class CoverageHighlighter(private val myProject: Project) {
                             it.value != 0L
                         )
                     }
-                    is FunctionRegionData -> TODO()
+                    is FunctionRegionData -> functionData.coverage.data.map {
+                        Triple(
+                            LogicalPosition(it.startPos.first - 1, it.startPos.second - 1),
+                            LogicalPosition(it.endPos.first - 1, it.endPos.second - 1),
+                            it.executionCount != 0L
+                        )
+                    }
                 }
             }.flatten(), file.functions.values.map { functionData ->
                 functionData.branches.map {
