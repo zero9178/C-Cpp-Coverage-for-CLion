@@ -25,7 +25,7 @@ import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.CoverageGenerator
 import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.notification.CoverageNotification
-import net.zero9178.cov.settings.CoverageGeneratorPaths
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.window.CoverageView
 import java.nio.file.Paths
 import javax.swing.tree.DefaultMutableTreeNode
@@ -94,34 +94,36 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                         environment,
                         executionTarget
                     )
-                        ?: return
 
                 val resolver = configuration.getResolveConfiguration(executionTarget)
                 val root = DefaultMutableTreeNode("invisible-root")
-                for ((_, value) in data.files) {
-                    val fileNode = object : DefaultMutableTreeNode(value) {
-                        override fun toString(): String {
-                            val filePath = (userObject as? CoverageFileData)?.filePath ?: return userObject.toString()
-                            val basePath = configuration.project.basePath ?: return filePath
-                            return if (resolver?.sources?.contains(
-                                    LocalFileSystem.getInstance().findFileByPath(
-                                        environment.toLocalPath(filePath)
-                                    )
-                                ) == true
-                            ) {
-                                Paths.get(basePath).relativize(Paths.get(filePath)).toString()
-                            } else {
-                                filePath
+                if (data != null) {
+                    for ((_, value) in data.files) {
+                        val fileNode = object : DefaultMutableTreeNode(value) {
+                            override fun toString(): String {
+                                val filePath =
+                                    (userObject as? CoverageFileData)?.filePath ?: return userObject.toString()
+                                val basePath = configuration.project.basePath ?: return filePath
+                                return if (resolver?.sources?.contains(
+                                        LocalFileSystem.getInstance().findFileByPath(
+                                            environment.toLocalPath(filePath)
+                                        )
+                                    ) == true
+                                ) {
+                                    Paths.get(basePath).relativize(Paths.get(filePath)).toString()
+                                } else {
+                                    filePath
+                                }
                             }
                         }
-                    }
 
-                    root.add(fileNode)
-                    for (function in value.functions.values) {
-                        fileNode.add(object : DefaultMutableTreeNode(function) {
-                            override fun toString() =
-                                (userObject as? CoverageFunctionData)?.functionName ?: userObject.toString()
-                        })
+                        root.add(fileNode)
+                        for (function in value.functions.values) {
+                            fileNode.add(object : DefaultMutableTreeNode(function) {
+                                override fun toString() =
+                                    (userObject as? CoverageFunctionData)?.functionName ?: userObject.toString()
+                            })
+                        }
                     }
                 }
                 CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
@@ -140,7 +142,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         environment: CPPEnvironment,
         configuration: CMakeAppRunConfiguration
     ): CoverageGenerator? {
-        val generator = CoverageGeneratorPaths.getInstance().getGeneratorFor(environment.toolchain.name)
+        val generator = CoverageGeneratorSettings.getInstance().getGeneratorFor(environment.toolchain.name)
         if (generator == null) {
             val notification =
                 CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(

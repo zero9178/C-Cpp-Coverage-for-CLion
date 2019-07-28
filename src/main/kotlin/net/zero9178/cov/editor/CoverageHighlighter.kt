@@ -54,7 +54,7 @@ class CoverageHighlighter(private val myProject: Project) {
                 ranges
             )
         }
-        myActiveInlays = info.branchInfo.map { (startPos, steppedIn, skipped) ->
+        myActiveInlays.plusAssign(info.branchInfo.map { (startPos, steppedIn, skipped) ->
             editor.inlayModel.addInlineElement(
                 editor.logicalPositionToOffset(startPos),
                 object : EditorCustomElementRenderer {
@@ -87,7 +87,7 @@ class CoverageHighlighter(private val myProject: Project) {
                     }
                 }
             )
-        }
+        })
     }
 
     private data class HighLightInfo(
@@ -95,7 +95,7 @@ class CoverageHighlighter(private val myProject: Project) {
         val branchInfo: List<Triple<LogicalPosition, Boolean, Boolean>>
     )
 
-    private var myActiveInlays: List<Inlay<*>?> = listOf()
+    private var myActiveInlays: MutableList<Inlay<*>?> = mutableListOf()
     private val myActiveHighlighting: MutableMap<String, MutableList<RangeHighlighter>> = mutableMapOf()
     private val myHighlighting: MutableMap<String, HighLightInfo> =
         mutableMapOf()
@@ -119,10 +119,9 @@ class CoverageHighlighter(private val myProject: Project) {
         ApplicationManager.getApplication().invokeLater {
             currentInlays.filterNotNull().forEach { it.dispose() }
         }
-        myActiveInlays = listOf()
+        myActiveInlays = mutableListOf()
         myActiveHighlighting.clear()
         if (coverageData == null) {
-            EditorFactory.getInstance().refreshAllEditors()
             return
         }
         for ((name, file) in coverageData.files) {

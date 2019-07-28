@@ -8,7 +8,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener
-import net.zero9178.cov.settings.CoverageGeneratorPaths
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -18,8 +18,11 @@ import javax.swing.DefaultComboBoxModel
 class SettingsWindowImpl : SettingsWindow() {
 
     init {
-        m_llvmProfdataBrowser.isVisible = false
-        m_llvmProfLabel.isVisible = false
+        myLLVMProfdataBrowser.isVisible = false
+        myLLVMProfLabel.isVisible = false
+        myDemanglerBrowser.isVisible = false
+        myDemanglerLabel.isVisible = false
+
         ApplicationManager.getApplication().messageBus.connect()
             .subscribe(CPPToolchainsListener.TOPIC, object : CPPToolchainsListener {
                 override fun toolchainsRenamed(renamed: MutableMap<String, String>) {
@@ -41,9 +44,9 @@ class SettingsWindowImpl : SettingsWindow() {
                                 //I am not sure at all yet if one can assume the order of the notification delivery. For now lets
                                 //just be happy if the order was correct (CoverageGeneratorPaths.kt was called first) and if not
                                 //do an empty string
-                                myEditorState[it.name] = CoverageGeneratorPaths.getInstance().paths.getOrDefault(
+                                myEditorState[it.name] = CoverageGeneratorSettings.getInstance().paths.getOrDefault(
                                     it.name,
-                                    CoverageGeneratorPaths.GeneratorInfo()
+                                    CoverageGeneratorSettings.GeneratorInfo()
                                 )
                             }
                         } else {
@@ -56,7 +59,7 @@ class SettingsWindowImpl : SettingsWindow() {
             })
         updateToolChainComboBox()
 
-        m_gcovOrllvmCovBrowser.addBrowseFolderListener(
+        myGcovOrllvmCovBrowser.addBrowseFolderListener(
             object : TextBrowseFolderListener(
                 FileChooserDescriptor(
                     true,
@@ -69,27 +72,27 @@ class SettingsWindowImpl : SettingsWindow() {
             ) {
                 override fun onFileChosen(chosenFile: VirtualFile) {
                     super.onFileChosen(chosenFile)
-                    val selectedItem = m_comboBox.selectedItem as? String ?: return
+                    val selectedItem = myComboBox.selectedItem as? String ?: return
                     val info = myEditorState[selectedItem]
                     if (info != null) {
-                        info.gcovOrllvmCovPath = m_gcovOrllvmCovBrowser.text
+                        info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
                         updateLLVMFields()
                     }
                 }
             }
         )
-        m_gcovOrllvmCovBrowser.textField.addKeyListener(object : KeyAdapter() {
+        myGcovOrllvmCovBrowser.textField.addKeyListener(object : KeyAdapter() {
             override fun keyReleased(e: KeyEvent?) {
-                val selectedItem = m_comboBox.selectedItem as? String ?: return
+                val selectedItem = myComboBox.selectedItem as? String ?: return
                 val info = myEditorState[selectedItem]
                 if (info != null) {
-                    info.gcovOrllvmCovPath = m_gcovOrllvmCovBrowser.text
+                    info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
                     updateLLVMFields()
                 }
             }
         })
 
-        m_llvmProfdataBrowser.addBrowseFolderListener(
+        myLLVMProfdataBrowser.addBrowseFolderListener(
             object : TextBrowseFolderListener(
                 FileChooserDescriptor(
                     true,
@@ -102,84 +105,139 @@ class SettingsWindowImpl : SettingsWindow() {
             ) {
                 override fun onFileChosen(chosenFile: VirtualFile) {
                     super.onFileChosen(chosenFile)
-                    val selectedItem = m_comboBox.selectedItem as? String ?: return
+                    val selectedItem = myComboBox.selectedItem as? String ?: return
                     val info = myEditorState[selectedItem]
                     if (info != null) {
-                        info.llvmProfDataPath = m_llvmProfdataBrowser.text
+                        info.llvmProfDataPath = myLLVMProfdataBrowser.text
                     }
                 }
             }
         )
-        m_llvmProfdataBrowser.textField.addKeyListener(object : KeyAdapter() {
+        myLLVMProfdataBrowser.textField.addKeyListener(object : KeyAdapter() {
             override fun keyReleased(e: KeyEvent?) {
-                val selectedItem = m_comboBox.selectedItem as? String ?: return
+                val selectedItem = myComboBox.selectedItem as? String ?: return
                 val info = myEditorState[selectedItem]
                 if (info != null) {
-                    info.llvmProfDataPath = m_llvmProfdataBrowser.text
+                    info.llvmProfDataPath = myLLVMProfdataBrowser.text
                 }
             }
         })
 
-        m_comboBox.addItemListener {
+        myDemanglerBrowser.addBrowseFolderListener(
+            object : TextBrowseFolderListener(
+                FileChooserDescriptor(
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false
+                )
+            ) {
+                override fun onFileChosen(chosenFile: VirtualFile) {
+                    super.onFileChosen(chosenFile)
+                    val selectedItem = myComboBox.selectedItem as? String ?: return
+                    val info = myEditorState[selectedItem]
+                    if (info != null) {
+                        info.demangler = myDemanglerBrowser.text
+                    }
+                }
+            }
+        )
+        myDemanglerBrowser.textField.addKeyListener(object : KeyAdapter() {
+            override fun keyReleased(e: KeyEvent?) {
+                val selectedItem = myComboBox.selectedItem as? String ?: return
+                val info = myEditorState[selectedItem]
+                if (info != null) {
+                    info.demangler = myDemanglerBrowser.text
+                }
+            }
+        })
+
+        myComboBox.addItemListener {
             if (it.stateChange == ItemEvent.SELECTED) {
                 updateUIAfterItemChange()
             }
         }
+
+        myIfBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
+        myLoopBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
+        myBooleanOpBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
     }
 
     private fun updateToolChainComboBox() {
-        m_comboBox.model = DefaultComboBoxModel(CPPToolchains.getInstance().toolchains.map { it.name }.toTypedArray())
+        myComboBox.model = DefaultComboBoxModel(CPPToolchains.getInstance().toolchains.map { it.name }.toTypedArray())
     }
 
     private fun updateUIAfterItemChange() {
-        val toolchainName = m_comboBox.selectedItem as? String ?: return
-        m_gcovOrllvmCovBrowser.text = myEditorState[toolchainName]?.gcovOrllvmCovPath ?: ""
-        m_llvmProfdataBrowser.text = myEditorState[toolchainName]?.llvmProfDataPath ?: ""
+        val toolchainName = myComboBox.selectedItem as? String ?: return
+        myGcovOrllvmCovBrowser.text = myEditorState[toolchainName]?.gcovOrllvmCovPath ?: ""
+        myLLVMProfdataBrowser.text = myEditorState[toolchainName]?.llvmProfDataPath ?: ""
+        myDemanglerBrowser.text = myEditorState[toolchainName]?.demangler ?: ""
         updateLLVMFields()
     }
 
     private fun updateLLVMFields() {
-        if (m_gcovOrllvmCovBrowser.text.isBlank()) {
-            m_errors.text = "No executable specified"
-            m_errors.icon = AllIcons.General.Warning
-            m_llvmProfLabel.isVisible = false
-            m_llvmProfdataBrowser.isVisible = false
+        if (myGcovOrllvmCovBrowser.text.isBlank()) {
+            myErrors.text = "No executable specified"
+            myErrors.icon = AllIcons.General.Warning
+            myLLVMProfLabel.isVisible = false
+            myLLVMProfdataBrowser.isVisible = false
+            myDemanglerLabel.isVisible = false
+            myDemanglerBrowser.isVisible = false
+            myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        if (!Paths.get(m_gcovOrllvmCovBrowser.text).exists()) {
-            m_errors.text = "'${m_gcovOrllvmCovBrowser.text}' is not a valid path to an executable"
-            m_errors.icon = AllIcons.General.Warning
-            m_llvmProfLabel.isVisible = false
-            m_llvmProfdataBrowser.isVisible = false
+        if (!Paths.get(myGcovOrllvmCovBrowser.text).exists()) {
+            myErrors.text = "'${myGcovOrllvmCovBrowser.text}' is not a valid path to an executable"
+            myErrors.icon = AllIcons.General.Warning
+            myLLVMProfLabel.isVisible = false
+            myLLVMProfdataBrowser.isVisible = false
+            myDemanglerLabel.isVisible = false
+            myDemanglerBrowser.isVisible = false
+            myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        if (!m_gcovOrllvmCovBrowser.text.contains("(llvm-cov|gcov)".toRegex(RegexOption.IGNORE_CASE))) {
-            m_errors.text = "'${m_gcovOrllvmCovBrowser.text}' is neither gcov nor llvm-cov"
-            m_errors.icon = AllIcons.General.Warning
-            m_llvmProfLabel.isVisible = false
-            m_llvmProfdataBrowser.isVisible = false
+        if (!myGcovOrllvmCovBrowser.text.contains("(llvm-cov|gcov)".toRegex(RegexOption.IGNORE_CASE))) {
+            myErrors.text = "'${myGcovOrllvmCovBrowser.text}' is neither gcov nor llvm-cov"
+            myErrors.icon = AllIcons.General.Warning
+            myLLVMProfLabel.isVisible = false
+            myLLVMProfdataBrowser.isVisible = false
+            myDemanglerLabel.isVisible = false
+            myDemanglerBrowser.isVisible = false
+            myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        m_errors.text = ""
-        m_errors.icon = null
-        m_llvmProfLabel.isVisible = m_gcovOrllvmCovBrowser.text.contains("llvm-cov", true)
-        m_llvmProfdataBrowser.isVisible = m_llvmProfLabel.isVisible
-        m_gcovOrLLVMCovLabel.text = if (m_llvmProfLabel.isVisible) "llvm-cov:" else "gcov:"
+        myErrors.text = ""
+        myErrors.icon = null
+        myLLVMProfLabel.isVisible = myGcovOrllvmCovBrowser.text.contains("llvm-cov", true)
+        myLLVMProfdataBrowser.isVisible = myLLVMProfLabel.isVisible
+        myDemanglerLabel.isVisible = myLLVMProfLabel.isVisible
+        myDemanglerBrowser.isVisible = myLLVMProfLabel.isVisible
+        myGcovOrLLVMCovLabel.text = if (myLLVMProfLabel.isVisible) "llvm-cov:" else "gcov:"
     }
 
-    private val myEditorState: MutableMap<String, CoverageGeneratorPaths.GeneratorInfo> =
-        CoverageGeneratorPaths.getInstance().paths.mapValues { it.value.copy() }.toMutableMap()
+    private val myEditorState: MutableMap<String, CoverageGeneratorSettings.GeneratorInfo> =
+        CoverageGeneratorSettings.getInstance().paths.mapValues { it.value.copy() }.toMutableMap()
+
     //toMutableMap creates a copy of the map instead of copying the reference
 
     init {
         updateUIAfterItemChange()
     }
 
-    override fun isModified() = CoverageGeneratorPaths.getInstance().paths != myEditorState
+    override fun isModified() =
+        CoverageGeneratorSettings.getInstance().paths != myEditorState || myIfBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
+                || myLoopBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
+                || myBooleanOpBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
 
     override fun getDisplayName() = "C/C++ Coverage"
 
     override fun apply() {
-        CoverageGeneratorPaths.getInstance().paths = myEditorState.mapValues { it.value.copy() }.toMutableMap()
+        CoverageGeneratorSettings.getInstance().paths = myEditorState.mapValues { it.value.copy() }.toMutableMap()
+        CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled = myIfBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled = myLoopBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled =
+            myBooleanOpBranchCoverage.isSelected
     }
 }

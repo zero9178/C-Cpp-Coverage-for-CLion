@@ -21,13 +21,22 @@ import java.nio.file.Paths
     name = "net.zero9178.coverage.settings",
     storages = [Storage("zero9178.coverage.xml", roamingType = RoamingType.DISABLED)]
 )
-class CoverageGeneratorPaths : PersistentStateComponent<CoverageGeneratorPaths.State> {
+class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSettings.State> {
 
-    data class GeneratorInfo(var gcovOrllvmCovPath: String = "", var llvmProfDataPath: String? = null) {
-        fun copy() = GeneratorInfo(gcovOrllvmCovPath, llvmProfDataPath)
+    data class GeneratorInfo(
+        var gcovOrllvmCovPath: String = "",
+        var llvmProfDataPath: String? = null,
+        var demangler: String? = null
+    ) {
+        fun copy() = GeneratorInfo(gcovOrllvmCovPath, llvmProfDataPath, demangler)
     }
 
-    data class State(var paths: MutableMap<String, GeneratorInfo> = mutableMapOf())
+    data class State(
+        var paths: MutableMap<String, GeneratorInfo> = mutableMapOf(),
+        var ifBranchCoverageEnabled: Boolean = true,
+        var loopBranchCoverageEnabled: Boolean = true,
+        var booleanOpBranchCoverageEnabled: Boolean = false
+    )
 
     private var myState: State = State()
 
@@ -41,6 +50,24 @@ class CoverageGeneratorPaths : PersistentStateComponent<CoverageGeneratorPaths.S
             myState.paths.forEach {
                 generateGeneratorFor(it.key, it.value)
             }
+        }
+
+    var ifBranchCoverageEnabled: Boolean
+        get() = myState.ifBranchCoverageEnabled
+        set(value) {
+            myState.ifBranchCoverageEnabled = value
+        }
+
+    var loopBranchCoverageEnabled: Boolean
+        get() = myState.loopBranchCoverageEnabled
+        set(value) {
+            myState.loopBranchCoverageEnabled = value
+        }
+
+    var booleanOpBranchCoverageEnabled: Boolean
+        get() = myState.booleanOpBranchCoverageEnabled
+        set(value) {
+            myState.booleanOpBranchCoverageEnabled = value
         }
 
     fun getGeneratorFor(toolchain: String) = myGenerators[toolchain]
@@ -72,7 +99,7 @@ class CoverageGeneratorPaths : PersistentStateComponent<CoverageGeneratorPaths.S
     }
 
     private fun generateGeneratorFor(name: String, info: GeneratorInfo) {
-        myGenerators[name] = getGeneratorFor(info.gcovOrllvmCovPath, info.llvmProfDataPath)
+        myGenerators[name] = getGeneratorFor(info.gcovOrllvmCovPath, info.llvmProfDataPath, info.demangler)
     }
 
     init {
@@ -114,12 +141,12 @@ class CoverageGeneratorPaths : PersistentStateComponent<CoverageGeneratorPaths.S
     }
 
     companion object {
-        fun getInstance() = ApplicationManager.getApplication().getComponent(CoverageGeneratorPaths::class.java)!!
+        fun getInstance() = ApplicationManager.getApplication().getComponent(CoverageGeneratorSettings::class.java)!!
     }
 }
 
-private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchain): CoverageGeneratorPaths.GeneratorInfo {
-    val toolset = toolchain.toolSet ?: return CoverageGeneratorPaths.GeneratorInfo()
+private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchain): CoverageGeneratorSettings.GeneratorInfo {
+    val toolset = toolchain.toolSet ?: return CoverageGeneratorSettings.GeneratorInfo()
     var compiler =
         toolchain.customCXXCompilerPath ?: System.getenv("CXX")?.ifBlank { System.getenv("CC") }
     //Lets not deal with WSL yet
@@ -160,19 +187,25 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
 
             val profPath = findExe(prefix, "llvm-profdata", suffix, Paths.get(compiler).parent)
 
+            val llvmFilt = findExe(prefix, "llvm-cxxfilt", suffix, Paths.get(compiler).parent)
+
             return if (profPath == null || covPath == null) {
-                CoverageGeneratorPaths.GeneratorInfo()
+                CoverageGeneratorSettings.GeneratorInfo()
             } else {
-                CoverageGeneratorPaths.GeneratorInfo(covPath, profPath)
+                CoverageGeneratorSettings.GeneratorInfo(
+                    covPath,
+                    profPath,
+                    llvmFilt ?: findExe(prefix, "c++filt", suffix, Paths.get(compiler).parent)
+                )
             }
         } else if (compiler == null) {
             if (toolset is MinGW) {
                 val path = toolset.home.toPath().resolve("bin")
                     .resolve(if (OSType.getCurrent() == OSType.WIN) "gcov.exe" else "gcov")
                 return if (path.exists()) {
-                    CoverageGeneratorPaths.GeneratorInfo(path.toString())
+                    CoverageGeneratorSettings.GeneratorInfo(path.toString())
                 } else {
-                    CoverageGeneratorPaths.GeneratorInfo()
+                    CoverageGeneratorSettings.GeneratorInfo()
                 }
             }
             compiler = "/usr/bin/gcc"
@@ -188,11 +221,11 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
 
         val gcovPath = findExe(prefix, "gcov", suffix, Paths.get(compiler).parent)
         if (gcovPath != null) {
-            CoverageGeneratorPaths.GeneratorInfo(gcovPath)
+            CoverageGeneratorSettings.GeneratorInfo(gcovPath)
         } else {
-            CoverageGeneratorPaths.GeneratorInfo()
+            CoverageGeneratorSettings.GeneratorInfo()
         }
     } else {
-        CoverageGeneratorPaths.GeneratorInfo()
+        CoverageGeneratorSettings.GeneratorInfo()
     }
 }

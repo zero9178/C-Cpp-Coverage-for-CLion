@@ -18,7 +18,7 @@
 
     <application-components>
         <component>
-            <implementation-class>net.zero9178.cov.settings.CoverageGeneratorPaths</implementation-class>
+            <implementation-class>net.zero9178.cov.settings.CoverageGeneratorSettings</implementation-class>
         </component>
     </application-components>
 
