@@ -77,12 +77,12 @@ I recommend putting it into the main file of your testing framework eg.
 ### Running
 
 Similar to how sanitizers work in CLion, coverage is automatically gathered when the right compiler flags are detected.
-After your executable has terminated a Modal dialog will open Telling you that coverage is being 
-gathered and prohibiting you from editing the source code. As soon as it finishes the toolwindow
+After your executable has terminated a modal dialog will open telling you that coverage is being 
+gathered and prohibiting you from editing the source code. As soon as it finishes the tool window
 on the right will open and display your statistics. You can double click either on a file or a
 function to navigate to said symbol or you can click on the header above to sort by a metric. By default
 only source files inside of your project will be displayed. By checking the checkbox on the top right every file compiled 
-into your project will be shown. Using the clear button will clear all editors and the toolwindow.
+into your project will be shown. Using the clear button will clear all editors and the tool window.
 
 ## Differences in compilers
 
@@ -90,9 +90,9 @@ This plugin implements 3 different coverage gathers. Clang 5 onwards, GCC 9 onwa
 GCC 6 to 8 is not recommended and cannot produce branch coverage like the other two.
 The most powerful of these implementations is Clang.
  
-Clang doesn't use line coverage but instead uses Region coverage and has no branch coverage on its own. A Region is a
+Clang doesn't use line coverage but instead uses region coverage and has no branch coverage on its own. A region is a
  block of code that has the same execution count and is specified from start to end 
-character. This precise data allows this plugin to generate Branch coverage for Clang via postprocessing by making a query 
+character. This precise data allows this plugin to generate branch coverage for Clang via postprocessing by making a query 
 into the CLion parser structure and comparing the execution counts of neighbouring regions. Region coverage also
 allows checking if operands of boolean operators that short circuit have been evaluated or not. 
 
@@ -106,7 +106,7 @@ incredible amount of noise in the editor the plugin filters them out.
 Previous versions of gcc generated very similar information as GCC 9. Branch coverage however does not carry information 
 as to where a branch comes from and as all newer versions of gcc implement the GCC 9 format or newer, I decided not 
 to try and implement branch coverage for GCC 6 to 8. Line coverage however should work as intended. Please note that 
-gcov versions 6 to 8 time out easily on large projects.
+gcov versions 6 to 8 crash easily on large projects.
 
 ## Known Issues/TODOs
 
@@ -124,8 +124,8 @@ in future versions
 * Due to how the plugin renders region coverage in the editor, the coloured background behind the scroll wheel in the 
 editor is not accurate and will be fixed in future versions. 
 * Currently a new function is generated for each type in a template instantiations. if constexpr
-also have weird data and in general data in such functions may be less accurate. Future versions will 
-try to address this issue and possibly even parse the function name in order to collapse different instatiations of the 
+also has weird data and in general data in such functions may be less accurate. Future versions will 
+try to address this issue and possibly even parse the function name in order to collapse different instantiations of the 
 same function
 
  
