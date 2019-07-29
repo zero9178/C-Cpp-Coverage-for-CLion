@@ -1,5 +1,7 @@
 package net.zero9178.cov.data
 
+import net.zero9178.cov.util.ComparablePair
+
 //All line and column numbers in the file start with 1 and 1
 data class CoverageData(val files: Map<String, CoverageFileData>)
 
@@ -12,7 +14,11 @@ sealed class FunctionCoverageData {
 class FunctionLineData(override val data: Map<Int, Long>) : FunctionCoverageData()
 
 class FunctionRegionData(override val data: List<Region>) : FunctionCoverageData() {
-    data class Region(val startPos: Pair<Int, Int>, val endPos: Pair<Int, Int>, val executionCount: Long)
+    data class Region(
+        val startPos: ComparablePair<Int, Int>,
+        val endPos: ComparablePair<Int, Int>,
+        val executionCount: Long
+    )
 }
 
 data class CoverageFunctionData(
@@ -24,7 +30,7 @@ data class CoverageFunctionData(
 )
 
 data class CoverageBranchData(
-    val startPos: Pair<Int, Int>,
+    val startPos: ComparablePair<Int, Int>,
     val steppedInCount: Int,
     val skippedCount: Int
 )

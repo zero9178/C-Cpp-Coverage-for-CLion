@@ -1,9 +1,7 @@
 package net.zero9178.cov.data
 
-import com.beust.klaxon.Converter
-import com.beust.klaxon.Json
-import com.beust.klaxon.JsonValue
-import com.beust.klaxon.Klaxon
+import com.beust.klaxon.*
+import com.beust.klaxon.jackson.jackson
 import com.github.h0tk3y.betterParse.combinators.*
 import com.github.h0tk3y.betterParse.grammar.Grammar
 import com.github.h0tk3y.betterParse.grammar.tryParseToEnd
@@ -14,6 +12,7 @@ import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
@@ -30,9 +29,13 @@ import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
+import net.zero9178.cov.util.ComparablePair
+import net.zero9178.cov.util.toCP
+import java.io.StringReader
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
+import kotlin.math.ceil
 
 interface CoverageGenerator {
     fun patchEnvironment(
@@ -110,15 +113,6 @@ private class LLVMCoverageGenerator(
         }
     }
 
-    private operator fun <A : Comparable<A>, B : Comparable<B>> Pair<A, B>.compareTo(pair: Pair<A, B>): Int {
-        val result = first.compareTo(pair.first)
-        return if (result != 0) {
-            result
-        } else {
-            second.compareTo(pair.second)
-        }
-    }
-
     private fun processJson(
         jsonContent: String,
         environment: CPPEnvironment,
@@ -165,49 +159,70 @@ private class LLVMCoverageGenerator(
                     val region = value as? Region ?: return ""
                     return "[${region.lineStart},${region.columnStart},${region.lineEnd},${region.columnEnd},${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
                 }
-            }).parse<Root>(jsonContent) ?: return CoverageData(emptyMap())
+            }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
+            ?: return CoverageData(emptyMap())
 
         val mangledNames = root.data.map { data -> data.functions.map { it.name } }.flatten()
         val demangledNames = if (demangler != null && Paths.get(demangler).exists()) {
-            val p = ProcessBuilder().command(listOf(demangler) + mangledNames).start()
-            val result = p.inputStream.bufferedReader().readLines()
-            p.waitFor()
+            val p = ProcessBuilder().command(demangler).redirectErrorStream(true).start()
+            var result = listOf<String>()
+            p.outputStream.bufferedWriter().use { writer ->
+                p.inputStream.bufferedReader().use { reader ->
+                    result = mangledNames.map { mangled ->
+                        writer.appendln(
+                            if (mangled.startsWith('_')) mangled else mangled.substring(
+                                1 + mangled.indexOf(
+                                    ':'
+                                )
+                            )
+                        )
+                        writer.flush()
+                        val output: String? = reader.readLine()
+                        output ?: mangled
+                    }
+                }
+            }
+            p.destroyForcibly()
             mangledNames.zip(result).associate { it }
         } else {
             mangledNames.associateBy { it }
         }
 
         return CoverageData(root.data.map { data ->
-            data.files.map { file ->
-                val entries = file.segments.filter { it.isRegionEntry }
-                CoverageFileData(
-                    environment.toLocalPath(file.filename).replace('\\', '/'),
-                    data.functions.filter { it.filenames.contains(file.filename) && it.regions.isNotEmpty() }.map { function ->
+            data.files.chunked(ceil(data.files.size / Thread.activeCount().toDouble()).toInt()).map { files ->
+                ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
+                    files.map { file ->
+                        val entries = file.segments.filter { it.isRegionEntry }
+                        CoverageFileData(
+                            environment.toLocalPath(file.filename).replace('\\', '/'),
+                            data.functions.filter { it.filenames.contains(file.filename) && it.regions.isNotEmpty() }.map { function ->
 
-                        val regions = function.regions.filter { it.regionKind != Region.GAP }
-                        val branches =
-                            regions.filter { region -> entries.any { (it.line to it.column) == (region.lineStart to region.columnStart) } }
-                        CoverageFunctionData(
-                            function.regions.first().lineStart,
-                            function.regions.first().lineEnd,
-                            demangledNames[function.name] ?: function.name,
-                            FunctionRegionData(regions.map { region ->
-                                FunctionRegionData.Region(
-                                    region.lineStart to region.columnStart,
-                                    region.lineEnd to region.columnEnd,
-                                    region.executionCount
+                                val regions = function.regions.filter { it.regionKind != Region.GAP }
+                                val branches =
+                                    regions.filter { region -> entries.any { (it.line to it.column) == (region.lineStart to region.columnStart) } }
+                                CoverageFunctionData(
+                                    function.regions.first().lineStart,
+                                    function.regions.first().lineEnd,
+                                    demangledNames[function.name] ?: function.name,
+                                    FunctionRegionData(regions.map { region ->
+                                        FunctionRegionData.Region(
+                                            region.lineStart toCP region.columnStart,
+                                            region.lineEnd toCP region.columnEnd,
+                                            region.executionCount
+                                        )
+                                    }),
+                                    findStatementsForBranches(
+                                        function.regions.first().lineStart to function.regions.first().lineEnd,
+                                        branches,
+                                        regions,
+                                        environment.toLocalPath(file.filename),
+                                        project
+                                    )
                                 )
-                            }),
-                            findStatementsForBranches(
-                                function.regions.first().lineStart to function.regions.first().lineEnd,
-                                branches,
-                                regions,
-                                environment.toLocalPath(file.filename),
-                                project
-                            )
-                        )
-                    }.associateBy { it.functionName })
-            }
+                            }.associateBy { it.functionName })
+                    }
+                }
+            }.map { it.get() }.flatten()
         }.flatten().associateBy { it.filePath })
     }
 
@@ -227,34 +242,7 @@ private class LLVMCoverageGenerator(
             val document =
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
-            /**
-             * We must filter out the increment expression in a for loop. This is due to it not actually being executed as
-             * many times as the containing statement.
-             *
-             * Consider the case:
-             * for(int i = 0; i < 5; i++) {
-             *      if(i > 2) {
-             *          ...
-             *      }
-             *      break;
-             * }
-             *
-             * Due to the break the i++ is never executed yet the if was giving us a false delta and therefore false
-             * branch coverage.
-             * This makes a lot of sense if one turns a for into an equivalent while aka:
-             * {
-             *      int i = 0;
-             *      while(i < 5) {
-             *          if( i > 2) {
-             *              ...
-             *          }
-             *          break;
-             *          i++;
-             *      }
-             * }
-             *
-             */
-            val forIncrements = mutableListOf<OCStatement>()
+
             val branches = mutableListOf<Pair<Region, OCStatement>>()
 
             object : OCRecursiveVisitor(
@@ -283,12 +271,6 @@ private class LLVMCoverageGenerator(
                     super.visitIfStatement(stmt)
                 }
 
-                override fun visitForStatement(stmt: OCForStatement?) {
-                    super.visitForStatement(stmt)
-                    stmt ?: return
-                    forIncrements += (stmt.increment ?: return)
-                }
-
                 private fun matchStatement(parent: OCStatement, body: OCStatement) {
                     branches += regionEntries.filter {
                         body.textOffset == document.getLineStartOffset(it.lineStart - 1) + it.columnStart - 1
@@ -296,67 +278,51 @@ private class LLVMCoverageGenerator(
                 }
             }.visitElement(psiFile)
 
+            branches.fold(emptyList()) { list, (region, element) ->
 
-            val otherRegions = allRegions.filter { region ->
-                forIncrements.none {
-                    val startLine = document.getLineNumber(it.textOffset) + 1
-                    val startColumn = it.textOffset - document.getLineStartOffset(startLine - 1) + 1
-                    region.lineStart == startLine && region.columnStart == startColumn
+                val (above, after) = {
+                    val startLine = document.getLineNumber(element.textOffset) + 1
+                    val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
+                    val startPos = ComparablePair(startLine, startColumn)
+
+                    val endLine = document.getLineNumber(element.textRange.endOffset) + 1
+                    val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
+                    val endPos = endLine toCP endColumn + 1
+
+                    allRegions.findLast {
+                        startPos in (it.lineStart toCP it.columnStart)..(it.lineEnd toCP it.columnEnd)
+                    } to allRegions.findLast { endPos in (it.lineStart toCP it.columnStart)..(it.lineEnd toCP it.columnEnd) }
+                }()
+
+                if (above == null) {
+                    list
+                } else {
+
+                    val startLine = when (element) {
+                        is OCLoopStatement -> document.getLineNumber(
+                            element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
+                        ) + 1
+                        is OCIfStatement -> document.getLineNumber(
+                            element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
+                        ) + 1
+                        else -> document.getLineNumber(element.firstChild.textRange.endOffset) + 1
+                    }
+
+                    val startColumn = when (element) {
+                        is OCLoopStatement -> (element.lParenth?.textRange?.startOffset
+                            ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
+                        is OCIfStatement -> (element.lParenth?.textRange?.startOffset
+                            ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
+                        else -> element.firstChild.textRange.startOffset - document.getLineStartOffset(startLine - 1) + 1
+                    }
+
+                    list + CoverageBranchData(
+                        startLine toCP startColumn, region.executionCount.toInt(),
+                        (if (above.executionCount >= region.executionCount) above.executionCount - region.executionCount else after?.executionCount
+                            ?: 1).toInt()
+                    )
                 }
             }
-
-            branches.map { it.first to it.second as PsiElement }
-                .fold(emptyList<Pair<CoverageBranchData, PsiElement>>()) { list, (region, element) ->
-
-                    val (above, after) = {
-                        val startLine = document.getLineNumber(element.textOffset) + 1
-                        val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-
-                        val endLine = document.getLineNumber(element.textRange.endOffset) + 1
-                        val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
-
-                        otherRegions.findLast { (it.lineStart to it.columnStart) < (startLine to startColumn) } to
-                                otherRegions.findLast { (it.lineEnd to it.columnEnd) > (endLine to endColumn) }
-                    }()
-
-                    if (above == null) {
-                        list
-                    } else {
-
-                        val startLine = when (element) {
-                            is OCLoopStatement -> document.getLineNumber(
-                                element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
-                            ) + 1
-                            is OCIfStatement -> document.getLineNumber(
-                                element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
-                            ) + 1
-                            else -> document.getLineNumber(element.firstChild.textRange.endOffset) + 1
-                        }
-
-                        val startColumn = when (element) {
-                            is OCLoopStatement -> (element.lParenth?.textRange?.startOffset
-                                ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
-                            is OCIfStatement -> (element.lParenth?.textRange?.startOffset
-                                ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
-                            else -> element.firstChild.textRange.startOffset - document.getLineStartOffset(startLine - 1) + 1
-                        }
-
-
-                        val ifStat = list.lastOrNull()?.second as? OCIfStatement
-                        if (ifStat == null || ifStat.elseBranch != element) {
-                            list + (CoverageBranchData(
-                                startLine to startColumn, region.executionCount.toInt(),
-                                (if (above.executionCount >= region.executionCount) above.executionCount - region.executionCount else after?.executionCount
-                                    ?: 1).toInt()
-                            ) to element)
-                        } else {
-                            list + (CoverageBranchData(
-                                startLine to startColumn, region.executionCount.toInt(),
-                                (list.last().first.skippedCount - region.executionCount).toInt()
-                            ) to element)
-                        }
-                    }
-                }.map { it.first }
         }
     }
 
@@ -418,31 +384,206 @@ private class LLVMCoverageGenerator(
     }
 }
 
-private abstract class GCCCoverageGenerator(override val executable: String) : CoverageGenerator {
-    protected data class Root(
-        @Json(name = "current_working_directory") val currentWorkingDirectory: String,
-        @Json(name = "data_file") val dataFile: String,
-        @Json(name = "gcc_version") val gccVersion: String,
-        val files: List<File>
-    )
+private class GCCGCDACoverageGenerator(override val executable: String, private val myMajorVersion: Int) :
+    CoverageGenerator {
 
-    protected data class File(val file: String, val functions: List<Function>, val lines: List<Line>)
+    private sealed class Item {
+        class File(val path: String) : Item()
 
-    protected data class Function(
-        val blocks: Int, @Json(name = "blocks_executed") val blocksExecuted: Long, @Json(name = "demangled_name") val demangledName: String, @Json(
-            name = "end_column"
-        ) val endColumn: Int, @Json(name = "end_line") val endLine: Int, @Json(name = "execution_count") val executionCount: Long,
-        val name: String, @Json(name = "start_column") val startColumn: Int, @Json(name = "start_line") val startLine: Int
-    )
+        class Function(val startLine: Int, val endLine: Int, val count: Long, val name: String) : Item()
 
-    protected data class Line(
-        val branches: List<Branch>,
-        val count: Long, @Json(name = "line_number") val lineNumber: Int, @Json(name = "unexecuted_block") val unexecutedBlock: Boolean, @Json(
-            name = "function_name"
-        ) val functionName: String
-    )
+        class LCount(val line: Int, val count: Long) : Item()
 
-    protected data class Branch(val count: Int, val fallthrough: Boolean, @Json(name = "throw") val throwing: Boolean)
+        class Branch(val line: Int, val branchType: BranchType) : Item() {
+            enum class BranchType {
+                notexec,
+                taken,
+                nottaken
+            }
+        }
+    }
+
+    private fun parseGcovIR(
+        lines: List<List<String>>,
+        project: Project,
+        env: CPPEnvironment
+    ): CoverageData? {
+
+        abstract class GCovCommonGrammar : Grammar<List<Item>>() {
+            //Lexems
+            val num by token("\\d+")
+            val comma by token(",")
+            val colon by token(":")
+            val newLine by token("\n")
+            val ws by token("[ \t]+", ignore = true)
+            val file by token("file:.*")
+            val version by token("version:.*\n", ignore = true)
+
+            //Keywords
+            val function by token("function")
+            val lcount by token("lcount")
+            val branch by token("branch")
+            val notexec by token("notexec")
+            val taken by token("taken")
+            val nottaken by token("nottaken")
+            val nonKeyword by token("[a-zA-Z_]\\w*")
+
+            val word by nonKeyword or file or function or lcount or branch or notexec or nottaken
+
+            val fileLine by file use {
+                Item.File(env.toLocalPath(text.removePrefix("file:")).replace('\\', '/'))
+            }
+
+            val branchLine by -branch and -colon and num and -comma and (notexec or taken or nottaken) map { (count, type) ->
+                Item.Branch(count.text.toInt(), Item.Branch.BranchType.valueOf(type.text))
+            }
+        }
+
+        val govUnder8Grammer = object : GCovCommonGrammar() {
+
+            val functionLine by -function and -colon and num and -comma and num and -comma and word map { (line, count, name) ->
+                Item.Function(line.text.toInt(), -1, count.text.toLong(), name.text)
+            }
+
+            val lcountLine by -lcount and -colon and num and -comma and num map { (line, count) ->
+                Item.LCount(line.text.toInt(), count.text.toLong())
+            }
+
+            override val rootParser by separatedTerms(
+                fileLine or functionLine or lcountLine or branchLine,
+                newLine
+            )
+        }
+
+        val gcov8Grammer = object : GCovCommonGrammar() {
+
+            val functionLine by -function and -colon and num and -comma and num and -comma and num and -comma and word map { (startLine, endLine, count, name) ->
+                Item.Function(startLine.text.toInt(), endLine.text.toInt(), count.text.toLong(), name.text)
+            }
+
+            val lcountLine by -lcount and -colon and num and -comma and num and -comma and -num map { (line, count) ->
+                Item.LCount(line.text.toInt(), count.text.toLong())
+            }
+
+            override val rootParser by separatedTerms(
+                fileLine or functionLine or lcountLine or branchLine,
+                newLine
+            )
+        }
+
+        val result = lines.chunked(ceil(lines.size.toDouble() / Thread.activeCount()).toInt()).map {
+            ApplicationManager.getApplication().executeOnPooledThread<List<Item>> {
+                it.map { gcovFile ->
+                    val ast = if (myMajorVersion == 8) {
+                        gcov8Grammer.tryParseToEnd(gcovFile.joinToString("\n"))
+                    } else {
+                        govUnder8Grammer.tryParseToEnd(gcovFile.joinToString("\n"))
+                    }
+                    when (ast) {
+                        is ErrorResult -> {
+                            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
+                                "Error parsing gcov generated files",
+                                "This is either due to a bug in the plugin or gcov",
+                                "Parser output:$ast",
+                                NotificationType.ERROR
+                            )
+                            Notifications.Bus.notify(notification, project)
+                            emptyList()
+                        }
+                        is Parsed -> ast.value.filter { it !is Item.Branch }
+                    }
+                }.flatten()
+            }
+        }.map { it.get() }.flatten()
+        return linesToCoverageData(result)
+    }
+
+    private fun linesToCoverageData(lines: List<Item>): CoverageData {
+        val files = mutableListOf<CoverageFileData>()
+        var lineCopy = lines
+        while (lineCopy.isNotEmpty()) {
+            val item = lineCopy[0]
+            lineCopy = lineCopy.subList(1, lineCopy.size)
+            val file = item as? Item.File ?: continue
+            val functions = mutableListOf<Triple<Int, String, MutableMap<Int, Long>>>()
+            lineCopy = lineCopy.dropWhile {
+                if (it is Item.Function) {
+                    functions += Triple(it.startLine, it.name, mutableMapOf())
+                    true
+                } else {
+                    false
+                }
+            }
+            lineCopy = lineCopy.dropWhile {
+                if (it is Item.LCount) {
+                    val func = functions.findLast { function -> function.first <= it.line } ?: return@dropWhile true
+                    func.third[it.line] = it.count
+                    true
+                } else {
+                    false
+                }
+            }
+            if (functions.isEmpty()) {
+                continue
+            }
+            files += CoverageFileData(file.path, functions.map { (startLine, name, lines) ->
+                CoverageFunctionData(
+                    startLine, Int.MAX_VALUE, name, FunctionLineData(lines),
+                    emptyList()
+                )
+            }.associateBy { it.functionName })
+        }
+
+        return CoverageData(files.associateBy { it.filePath })
+    }
+
+    override fun generateCoverage(
+        configuration: CMakeAppRunConfiguration,
+        environment: CPPEnvironment,
+        executionTarget: ExecutionTarget
+    ): CoverageData? {
+        val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
+            configuration.getResolveConfiguration(executionTarget)
+        ) ?: return null
+        val files =
+            config.configurationGenerationDir.walkTopDown().filter {
+                it.isFile && it.name.endsWith(".gcda")
+            }.map { it.absolutePath }.toList()
+
+        val processBuilder =
+            ProcessBuilder().command(listOf(executable, "-b", "-i", "-m") + files).redirectErrorStream(true)
+                .directory(config.configurationGenerationDir)
+        val p = processBuilder.start()
+        val lines = p.inputStream.bufferedReader().readLines()
+        val retCode = p.waitFor()
+        if (retCode != 0) {
+            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
+                "gcov returned error code $retCode",
+                "Invocation and error output:",
+                "Invocation: ${processBuilder.command().joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
+                NotificationType.ERROR
+            )
+            Notifications.Bus.notify(notification, configuration.project)
+            return null
+        }
+
+        files.forEach { Files.deleteIfExists(Paths.get(it)) }
+
+        val filter = config.configurationGenerationDir.listFiles()?.filter {
+            it.isFile && it.name.endsWith(".gcov")
+        }?.toList() ?: emptyList()
+
+        val output = filter.map {
+            it.readLines()
+        }
+
+        filter.forEach { it.delete() }
+
+        return parseGcovIR(output, configuration.project, environment)
+    }
+}
+
+private class GCCJSONCoverageGenerator(override val executable: String) : CoverageGenerator {
 
     private fun findStatementsForBranches(
         lines: List<Line>,
@@ -556,7 +697,8 @@ private abstract class GCCCoverageGenerator(override val executable: String) : C
                 }.visitElement(psiFile)
 
                 val zip =
-                    line.branches.chunked(2).filter { !it.any { branch -> branch.throwing } }.map { it[0] to it[1] }
+                    line.branches.chunked(2).filter { it.none { branch -> branch.throwing } && it.size == 2 }
+                        .map { it[0] to it[1] }
                         .zip(result)
 
                 fun OCStatement.getCondition() = when (this) {
@@ -680,7 +822,7 @@ private abstract class GCCCoverageGenerator(override val executable: String) : C
                             startLine - 1
                         ) + 1
                     CoverageBranchData(
-                        startLine to startColumn,
+                        startLine toCP startColumn,
                         pair.first, pair.second
                     )
                 }
@@ -703,7 +845,7 @@ private abstract class GCCCoverageGenerator(override val executable: String) : C
                                 ) + 1
                                 val column = (element.lParenth?.textRange?.startOffset
                                     ?: element.textOffset) - document.getLineStartOffset(startLine - 1) + 1
-                                startLine to column
+                                startLine toCP column
                             }
                             is OCIfStatement -> {
                                 val startLine = document.getLineNumber(
@@ -711,7 +853,7 @@ private abstract class GCCCoverageGenerator(override val executable: String) : C
                                 ) + 1
                                 val column = (element.lParenth?.textRange?.startOffset
                                     ?: element.textOffset) - document.getLineStartOffset(startLine - 1) + 1
-                                startLine to column
+                                startLine toCP column
                             }
                             is OCExpression -> {
                                 val startLine =
@@ -720,12 +862,12 @@ private abstract class GCCCoverageGenerator(override val executable: String) : C
                                     element.textOffset - document.getLineStartOffset(
                                         startLine - 1
                                     ) + 1
-                                startLine to column
+                                startLine toCP column
                             }
                             else -> {
                                 val startLine = document.getLineNumber(element.textOffset) + 1
                                 val column = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-                                startLine to column
+                                startLine toCP column
                             }
                         }, steppedIn.count, skipped.count
                     )
@@ -734,224 +876,71 @@ private abstract class GCCCoverageGenerator(override val executable: String) : C
         }
     }
 
-    protected fun rooToCoverageData(root: Root, env: CPPEnvironment, project: Project) =
-        CoverageData(root.files.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
-            CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
-                val lines = file.lines.filter {
-                    it.functionName == function.name
-                }
-                CoverageFunctionData(
-                    function.startLine,
-                    function.endLine,
-                    function.demangledName,
-                    FunctionLineData(lines.associate { it.lineNumber to it.count }),
-                    findStatementsForBranches(
-                        lines,
-                        env.toLocalPath(file.file),
-                        project
-                    )
-                )
-            }.associateBy { it.functionName })
-        }.associateBy { it.filePath })
-}
-
-private class GCCGCDACoverageGenerator(executable: String, private val myMajorVersion: Int) :
-    GCCCoverageGenerator(executable) {
-
-    private sealed class Item {
-        class File(val path: String) : Item()
-
-        class Function(val startLine: Int, val endLine: Int, val count: Long, val name: String) : Item()
-
-        class LCount(val line: Int, val count: Long) : Item()
-
-        class Branch(val line: Int, val branchType: BranchType) : Item() {
-            enum class BranchType {
-                notexec,
-                taken,
-                nottaken
-            }
-        }
-    }
-
-    private fun parseGcovIR(
-        lines: String,
-        project: Project,
-        env: CPPEnvironment
-    ): CoverageData? {
-
-        abstract class GCovCommonGrammar : Grammar<List<Item>>() {
-            //Lexems
-            val num by token("\\d+")
-            val comma by token(",")
-            val colon by token(":")
-            val newLine by token("\n")
-            val ws by token("[ \t]+", ignore = true)
-            val file by token("file:.*")
-            val version by token("version:.*\n", ignore = true)
-
-            //Keywords
-            val function by token("function")
-            val lcount by token("lcount")
-            val branch by token("branch")
-            val notexec by token("notexec")
-            val taken by token("taken")
-            val nottaken by token("nottaken")
-            val nonKeyword by token("[a-zA-Z_]\\w*")
-
-            val word by nonKeyword or file or function or lcount or branch or notexec or nottaken
-
-            val fileLine by file use {
-                Item.File(env.toLocalPath(text.removePrefix("file:")).replace('\\', '/'))
-            }
-
-            val branchLine by -branch and -colon and num and -comma and (notexec or taken or nottaken) map { (count, type) ->
-                Item.Branch(count.text.toInt(), Item.Branch.BranchType.valueOf(type.text))
-            }
-        }
-
-        val govUnder8Grammer = object : GCovCommonGrammar() {
-
-            val functionLine by -function and -colon and num and -comma and num and -comma and word map { (line, count, name) ->
-                Item.Function(line.text.toInt(), -1, count.text.toLong(), name.text)
-            }
-
-            val lcountLine by -lcount and -colon and num and -comma and num map { (line, count) ->
-                Item.LCount(line.text.toInt(), count.text.toLong())
-            }
-
-            override val rootParser by separatedTerms(fileLine or functionLine or lcountLine or branchLine, newLine)
-        }
-
-        val gcov8Grammer = object : GCovCommonGrammar() {
-
-            val functionLine by -function and -colon and num and -comma and num and -comma and num and -comma and word map { (startLine, endLine, count, name) ->
-                Item.Function(startLine.text.toInt(), endLine.text.toInt(), count.text.toLong(), name.text)
-            }
-
-            val lcountLine by -lcount and -colon and num and -comma and num and -comma and -num map { (line, count) ->
-                Item.LCount(line.text.toInt(), count.text.toLong())
-            }
-
-            override val rootParser by separatedTerms(
-                fileLine or functionLine or lcountLine or branchLine,
-                newLine
-            )
-        }
-        val ast = if (myMajorVersion == 8) {
-            gcov8Grammer.tryParseToEnd(lines)
-        } else {
-            govUnder8Grammer.tryParseToEnd(lines)
-        }
-        return when (ast) {
-            is ErrorResult -> {
-                val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                    "Error parsing gcov generated files",
-                    "This is either due to a bug in the plugin or gcov",
-                    "Parser output:$ast",
-                    NotificationType.ERROR
-                )
-                Notifications.Bus.notify(notification, project)
-                null
-            }
-            is Parsed -> linesToCoverageData(ast.value.filter { it !is Item.Branch })
-        }
-    }
-
-    private fun linesToCoverageData(lines: List<Item>): CoverageData {
-        val files = mutableListOf<CoverageFileData>()
-        var lineCopy = lines
-        while (lineCopy.isNotEmpty()) {
-            val item = lineCopy[0]
-            lineCopy = lineCopy.subList(1, lineCopy.size)
-            val file = item as? Item.File ?: continue
-            val functions = mutableListOf<Triple<Int, String, MutableMap<Int, Long>>>()
-            lineCopy = lineCopy.dropWhile {
-                if (it is Item.Function) {
-                    functions += Triple(it.startLine, it.name, mutableMapOf())
-                    true
-                } else {
-                    false
+    @Suppress("ConvertCallChainIntoSequence")
+    private fun rooToCoverageData(root: Root, env: CPPEnvironment, project: Project) =
+        CoverageData(root.files.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
+            ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
+                it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
+                    CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
+                        val lines = file.lines.filter {
+                            it.functionName == function.name
+                        }
+                        CoverageFunctionData(
+                            function.startLine,
+                            function.endLine,
+                            function.demangledName,
+                            FunctionLineData(lines.associate { it.lineNumber to it.count }),
+                            findStatementsForBranches(
+                                lines,
+                                env.toLocalPath(file.file),
+                                project
+                            )
+                        )
+                    }.associateBy { it.functionName })
                 }
             }
-            lineCopy = lineCopy.dropWhile {
-                if (it is Item.LCount) {
-                    val func = functions.findLast { function -> function.first <= it.line } ?: return@dropWhile true
-                    func.third[it.line] = it.count
-                    true
-                } else {
-                    false
-                }
-            }
-            if (functions.isEmpty()) {
-                continue
-            }
-            files += CoverageFileData(file.path, functions.map { (startLine, name, lines) ->
-                CoverageFunctionData(
-                    startLine, Int.MAX_VALUE, name, FunctionLineData(lines),
-                    emptyList()
-                )
-            }.associateBy { it.functionName })
-        }
+        }.map { it.get() }.flatten().associateBy { it.filePath })
 
-        return CoverageData(files.associateBy { it.filePath })
-    }
+    private data class Root(
+        @Json(name = "current_working_directory") val currentWorkingDirectory: String,
+        @Json(name = "data_file") val dataFile: String,
+        @Json(name = "gcc_version") val gccVersion: String,
+        val files: List<File>
+    )
 
-    override fun generateCoverage(
-        configuration: CMakeAppRunConfiguration,
-        environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
-    ): CoverageData? {
-        val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
-            configuration.getResolveConfiguration(executionTarget)
-        ) ?: return null
-        val files =
-            config.configurationGenerationDir.walkTopDown().filter {
-                it.isFile && it.name.endsWith(".gcda")
-            }.map { it.absolutePath }.toList()
+    private data class File(val file: String, val functions: List<Function>, val lines: List<Line>)
 
-        val processBuilder =
-            ProcessBuilder().command(listOf(executable, "-b", "-i", "-m") + files).redirectErrorStream(true)
-                .directory(config.configurationGenerationDir)
-        val p = processBuilder.start()
-        val lines = p.inputStream.bufferedReader().readLines()
-        val retCode = p.waitFor()
-        if (retCode != 0) {
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "gcov returned error code $retCode",
-                "Invocation and error output:",
-                "Invocation: ${processBuilder.command().joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
-                NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
-            return null
-        }
+    private data class Function(
+        val blocks: Int, @Json(name = "blocks_executed") val blocksExecuted: Long, @Json(name = "demangled_name") val demangledName: String, @Json(
+            name = "end_column"
+        ) val endColumn: Int, @Json(name = "end_line") val endLine: Int, @Json(name = "execution_count") val executionCount: Long,
+        val name: String, @Json(name = "start_column") val startColumn: Int, @Json(name = "start_line") val startLine: Int
+    )
 
-        files.forEach { Files.deleteIfExists(Paths.get(it)) }
+    private data class Line(
+        val branches: List<Branch>,
+        val count: Long, @Json(name = "line_number") val lineNumber: Int, @Json(name = "unexecuted_block") val unexecutedBlock: Boolean, @Json(
+            name = "function_name"
+        ) val functionName: String = ""
+    )
 
-        val filter = config.configurationGenerationDir.listFiles()?.filter {
-            it.isFile && it.name.endsWith(".gcov")
-        }?.toList() ?: emptyList()
-        val output = filter.map {
-            it.readLines()
-        }.flatten().joinToString("\n")
-
-        filter.forEach { it.delete() }
-
-        return parseGcovIR(output, configuration.project, environment)
-    }
-}
-
-private class GCCJSONCoverageGenerator(executable: String) : GCCCoverageGenerator(executable) {
+    private data class Branch(val count: Int, val fallthrough: Boolean, @Json(name = "throw") val throwing: Boolean)
 
     private fun processJson(
-        jsonContent: String,
+        jsonContents: List<String>,
         env: CPPEnvironment,
         project: Project
     ): CoverageData {
-        val root = Klaxon().parse<Root>(jsonContent) ?: return CoverageData(emptyMap())
 
-        return rooToCoverageData(root, env, project)
+        val root = jsonContents.map {
+            ApplicationManager.getApplication().executeOnPooledThread<List<File>> {
+                Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)?.files
+            }
+        }.map {
+            it.get()
+        }.flatten()
+
+        return rooToCoverageData(Root("", "", "", root), env, project)
     }
 
     override fun generateCoverage(
@@ -985,7 +974,7 @@ private class GCCJSONCoverageGenerator(executable: String) : GCCCoverageGenerato
 
         files.forEach { Files.deleteIfExists(Paths.get(it)) }
 
-        return processJson(lines.joinToString(), environment, configuration.project)
+        return processJson(lines, environment, configuration.project)
     }
 }
 

@@ -9,8 +9,11 @@ import com.intellij.execution.process.ProcessListener
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.util.Key
-import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.execution.CidrBuildTarget
@@ -44,7 +47,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         val executionTarget = ExecutionTargetManager.getInstance(applicableConfiguration.project).activeTarget
         val resolver = applicableConfiguration.getResolveConfiguration(executionTarget) ?: return false
         CLanguageKind.values().forEach {
-            val switches = resolver.getCompilerSettings(it, null).compilerSwitches ?: return@forEach
+            val switches = resolver.getCompilerSettings(it).compilerSwitches ?: return@forEach
             val list = switches.getList(CidrCompilerSwitches.Format.RAW)
             return list.contains("--coverage") || list.containsAll(
                 listOf(
@@ -88,48 +91,52 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
             override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {}
 
             override fun processTerminated(event: ProcessEvent) {
-                val data =
-                    getCoverageGenerator(environment, configuration)?.generateCoverage(
-                        configuration,
-                        environment,
-                        executionTarget
-                    )
+                ProgressManager.getInstance()
+                    .run(object : Task.Modal(configuration.project, "Gathering coverage...", false) {
+                        override fun run(indicator: ProgressIndicator) {
+                            indicator.isIndeterminate = true
+                            val data =
+                                getCoverageGenerator(environment, configuration)?.generateCoverage(
+                                    configuration,
+                                    environment,
+                                    executionTarget
+                                )
+                            val root = DefaultMutableTreeNode("invisible-root")
+                            if (data != null) {
+                                for ((_, value) in data.files) {
+                                    val fileNode = object : DefaultMutableTreeNode(value) {
+                                        override fun toString(): String {
+                                            val filePath =
+                                                ((userObject as? CoverageFileData)?.filePath
+                                                    ?: return userObject.toString()).replace('\\', '/')
+                                            val basePath =
+                                                (configuration.project.basePath ?: return filePath).replace('\\', '/')
+                                            return if (filePath.startsWith(basePath)) {
+                                                Paths.get(basePath).relativize(Paths.get(filePath)).toString()
+                                            } else {
+                                                filePath
+                                            }
+                                        }
+                                    }
 
-                val resolver = configuration.getResolveConfiguration(executionTarget)
-                val root = DefaultMutableTreeNode("invisible-root")
-                if (data != null) {
-                    for ((_, value) in data.files) {
-                        val fileNode = object : DefaultMutableTreeNode(value) {
-                            override fun toString(): String {
-                                val filePath =
-                                    (userObject as? CoverageFileData)?.filePath ?: return userObject.toString()
-                                val basePath = configuration.project.basePath ?: return filePath
-                                return if (resolver?.sources?.contains(
-                                        LocalFileSystem.getInstance().findFileByPath(
-                                            environment.toLocalPath(filePath)
-                                        )
-                                    ) == true
-                                ) {
-                                    Paths.get(basePath).relativize(Paths.get(filePath)).toString()
-                                } else {
-                                    filePath
+                                    root.add(fileNode)
+                                    for (function in value.functions.values) {
+                                        fileNode.add(object : DefaultMutableTreeNode(function) {
+                                            override fun toString() =
+                                                (userObject as? CoverageFunctionData)?.functionName
+                                                    ?: userObject.toString()
+                                        })
+                                    }
                                 }
                             }
+                            CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
+                            ApplicationManager.getApplication().invokeLater {
+                                CoverageView.getInstance(configuration.project).setRoot(root)
+                                ToolWindowManager.getInstance(configuration.project).getToolWindow("C/C++ Coverage")
+                                    ?.show(null)
+                            }
                         }
-
-                        root.add(fileNode)
-                        for (function in value.functions.values) {
-                            fileNode.add(object : DefaultMutableTreeNode(function) {
-                                override fun toString() =
-                                    (userObject as? CoverageFunctionData)?.functionName ?: userObject.toString()
-                            })
-                        }
-                    }
-                }
-                CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
-                ApplicationManager.getApplication().invokeLater {
-                    CoverageView.getInstance(configuration.project).setRoot(root)
-                }
+                    })
             }
 
             override fun processWillTerminate(event: ProcessEvent, willBeDestroyed: Boolean) {}

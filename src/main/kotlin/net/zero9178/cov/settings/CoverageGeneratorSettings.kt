@@ -75,7 +75,14 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     override fun getState() = myState
 
     override fun loadState(state: State) {
-        myState = state
+        state.paths.forEach {
+            if (myState.paths.contains(it.key)) {
+                myState.paths[it.key] = it.value
+            }
+        }
+        myState.ifBranchCoverageEnabled = state.ifBranchCoverageEnabled
+        myState.booleanOpBranchCoverageEnabled = state.booleanOpBranchCoverageEnabled
+        myState.loopBranchCoverageEnabled = state.loopBranchCoverageEnabled
         ensurePopulatedPaths()
     }
 
@@ -146,7 +153,7 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
 }
 
 private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchain): CoverageGeneratorSettings.GeneratorInfo {
-    val toolset = toolchain.toolSet ?: return CoverageGeneratorSettings.GeneratorInfo()
+    val toolset = toolchain.toolSet
     var compiler =
         toolchain.customCXXCompilerPath ?: System.getenv("CXX")?.ifBlank { System.getenv("CC") }
     //Lets not deal with WSL yet
@@ -161,13 +168,15 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
             if (insideSameDir != null) {
                 extraPath.resolve(insideSameDir).toString()
             } else {
-                System.getenv("PATH").splitToSequence(File.pathSeparatorChar).asSequence().map {
-                    Paths.get(it)
+                val pair = System.getenv("PATH").splitToSequence(File.pathSeparatorChar).asSequence().map {
+                    Paths.get(it).toFile()
                 }.map { path ->
-                    path.toFile().listFiles()?.asSequence()?.map {
-                        "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
-                    }?.filterNotNull()?.maxBy { it.value.length }
-                }.filterNotNull().maxBy { it.value.length }?.value
+                    val result = path.listFiles()?.asSequence()?.map {
+                        it to "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
+                    }?.filter { it.second != null }?.map { it.first to it.second!! }?.maxBy { it.second.value.length }
+                    result
+                }.filterNotNull().maxBy { it.second.value.length }
+                pair?.first?.absolutePath
             }
         }
 

@@ -13,7 +13,7 @@ import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.IconLoader
+import com.intellij.util.IconUtil
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
@@ -66,13 +66,14 @@ class CoverageHighlighter(private val myProject: Project) {
                         textAttributes: TextAttributes
                     ) {
                         val margin = 1
-                        val image = IconLoader.toImage(
-                            if (steppedIn && skipped) AllIcons.Actions.Commit else {
-                                AllIcons.General.Error
-                            }
-                        ) ?: return
+                        val icon = IconUtil.toSize(
+                            if (steppedIn && skipped) AllIcons.Actions.Commit else AllIcons.General.Error,
+                            targetRegion.height - 2 * margin,
+                            targetRegion.height - 2 * margin
+                        )
+
                         g.drawImage(
-                            image,
+                            IconUtil.toImage(icon),
                             targetRegion.x + margin,
                             targetRegion.y + margin,
                             targetRegion.height - 2 * margin,
@@ -150,7 +151,7 @@ class CoverageHighlighter(private val myProject: Project) {
                         it.skippedCount != 0
                     )
                 }
-            }.flatten())
+            }.flatten().distinctBy { it.first })
         }
         ApplicationManager.getApplication().invokeLater {
             EditorFactory.getInstance().allEditors.forEach {

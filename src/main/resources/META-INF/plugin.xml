@@ -13,6 +13,27 @@
 
     -->
 
+    <change-notes><![CDATA[
+      2.0.0: Rewrote almost all of the plugin. Supported compilers are now Clang 5 onwards, GCC 6 onwards. Recommended Compilers are Clang 6 onwards and gcc 9 onwards.
+      Remade GUI for both displaying coverage as well as for the settings menu. Settings menu now tries to guess current gcov or llvm-cov for the toolchain if not manually configured.
+      Implemented Branch Coverage for both Clang and GCC 9, which is shown in the toolwindow as well as in the Editor using Inlays. GCC uses Line coverage to show which lines have been covered.
+      Clang uses more precise and useful Region coverage. For further details, known issues and differences of compilers
+       see <a href="https://github.com/zero9178/GCoverage4CLion/blob/master/README.md">https://github.com/zero9178/GCoverage4CLion/blob/master/README.md</a> <br/>
+      1.1.3: Fixed bug with Coverage not working on Mac OS X. GCov now application wide and Configurable per Toolchain. WSL now supported.<br/>
+      1.1.2: Fixed bug with Coverage not working in Linux and on older versions of GCC. Supported versions of gcov are now 4.8 to 8.2.<br/>
+      1.1.1: Fixed bug with Coverage not running after normal application exit. Filepaths are now relative to project root if only showing project sources<br/>
+      1.1:  Fixed bug with Coverage not working during tests. Fixed bug with incorrect File coverage displayed. Added clear button<br/>
+      1.0:  Initial Release</br>
+    ]]></change-notes>
+
+    <description><![CDATA[
+C and C++ Line, Region and Branch Coverage gatherer for GCC and Clang. Automatically gathers line, region and branch coverage
+and displays it in editor and a statistic window. To use compile with --coverage and link against gcov when using GCC or
+compile with -fprofile-instr-generate -fcoverage-mapping and use linker option -fprofile-instr-generate when using Clang.
+<br/>
+For further details, known issues and differences of compilers see <a href="https://github.com/zero9178/GCoverage4CLion/blob/master/README.md">https://github.com/zero9178/GCoverage4CLion/blob/master/README.md</a>
+    ]]></description>
+
     <depends>com.intellij.modules.clion</depends>
     <depends>com.intellij.modules.lang</depends>
 
