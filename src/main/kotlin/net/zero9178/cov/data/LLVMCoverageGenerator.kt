@@ -87,6 +87,7 @@ class LLVMCoverageGenerator(
         }
     }
 
+    @Suppress("ConvertCallChainIntoSequence")
     private fun processJson(
         jsonContent: String,
         environment: CPPEnvironment,
@@ -163,48 +164,56 @@ class LLVMCoverageGenerator(
         }
 
         return CoverageData(root.data.map { data ->
+            //Associates the filename with a list of all functions in that file
             val funcMap =
                 data.functions.map { func -> func.filenames.map { it to func } }.flatten().groupBy({ it.first }) {
                     it.second
                 }
-            data.files.chunked(ceil(data.files.size / Thread.activeCount().toDouble()).toInt()).map { files ->
-                ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
-                    files.map { file ->
-                        val entries = file.segments.filter { it.isRegionEntry }
-                        CoverageFileData(
-                            environment.toLocalPath(file.filename).replace('\\', '/'),
-                            funcMap.getOrDefault(
-                                file.filename,
-                                emptyList()
-                            ).filter { function -> function.regions.any { it.regionKind != Region.GAP } }.map { function ->
+
+            data.files.map { file ->
+                val entries = file.segments.filter { it.isRegionEntry }
+                CoverageFileData(
+                    environment.toLocalPath(file.filename).replace('\\', '/'),
+                    funcMap.getOrDefault(
+                        file.filename,
+                        emptyList()
+                    ).chunked(ceil(data.files.size / Thread.activeCount().toDouble()).toInt()).map { functions ->
+                        ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFunctionData>> {
+                            functions.fold(emptyList()) { result, function ->
 
                                 val regions =
                                     function.regions.filter { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
-                                val branches =
-                                    regions.filter { region -> entries.any { (it.line to it.column) == (region.lineStart to region.columnStart) } }
-                                CoverageFunctionData(
-                                    regions.first().lineStart,
-                                    regions.first().lineEnd,
-                                    demangledNames[function.name] ?: function.name,
-                                    FunctionRegionData(regions.map { region ->
-                                        FunctionRegionData.Region(
-                                            region.lineStart toCP region.columnStart,
-                                            region.lineEnd toCP region.columnEnd,
-                                            region.executionCount
+                                if (regions.isEmpty()) {
+                                    result
+                                } else {
+                                    val branches =
+                                        regions.filter { region -> entries.any { it.line == region.lineStart && it.column == region.columnStart } }
+                                    result + CoverageFunctionData(
+                                        regions.first().lineStart,
+                                        regions.first().lineEnd,
+                                        demangledNames[function.name] ?: function.name,
+                                        FunctionRegionData(regions.map { region ->
+                                            FunctionRegionData.Region(
+                                                region.lineStart toCP region.columnStart,
+                                                region.lineEnd toCP region.columnEnd,
+                                                region.executionCount
+                                            )
+                                        }),
+                                        findStatementsForBranches(
+                                            regions.first().lineStart to regions.first().lineEnd,
+                                            branches,
+                                            regions,
+                                            environment.toLocalPath(file.filename),
+                                            project
                                         )
-                                    }),
-                                    findStatementsForBranches(
-                                        regions.first().lineStart to regions.first().lineEnd,
-                                        branches,
-                                        regions,
-                                        environment.toLocalPath(file.filename),
-                                        project
                                     )
-                                )
-                            }.associateBy { it.functionName })
-                    }
-                }
-            }.map { it.get() }.flatten()
+                                }
+                            }
+                        }
+                    }.map { it.get() }.flatten().associateBy { it.functionName })
+            }
+
+
         }.flatten().associateBy { it.filePath })
     }
 
