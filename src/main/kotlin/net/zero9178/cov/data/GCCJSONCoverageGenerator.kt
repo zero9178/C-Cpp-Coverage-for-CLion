@@ -404,7 +404,13 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             }.map { it.absolutePath }.toList()
 
         val processBuilder =
-            ProcessBuilder().command(listOf(myGcov, "-b", "-i", "-m", "-t") + files).redirectErrorStream(true)
+            ProcessBuilder().command(
+                listOf(myGcov, "-i", "-m", "-t") + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+                    listOf("-b")
+                } else {
+                    emptyList()
+                } + files
+            ).redirectErrorStream(true)
         val p = processBuilder.start()
         val lines = p.inputStream.bufferedReader().readLines()
         val retCode = p.waitFor()

@@ -2,9 +2,8 @@ package net.zero9178.cov.data
 
 import com.github.h0tk3y.betterParse.combinators.*
 import com.github.h0tk3y.betterParse.grammar.Grammar
-import com.github.h0tk3y.betterParse.grammar.tryParseToEnd
-import com.github.h0tk3y.betterParse.parser.ErrorResult
-import com.github.h0tk3y.betterParse.parser.Parsed
+import com.github.h0tk3y.betterParse.grammar.parseToEnd
+import com.github.h0tk3y.betterParse.parser.ParseException
 import com.intellij.execution.ExecutionTarget
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
@@ -14,6 +13,7 @@ import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import net.zero9178.cov.notification.CoverageNotification
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.math.ceil
@@ -44,6 +44,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
     ): CoverageData? {
 
         abstract class GCovCommonGrammar : Grammar<List<Item>>() {
+
             //Lexems
             val num by token("\\d+")
             val comma by token(",")
@@ -51,10 +52,10 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             val newLine by token("\n")
             val ws by token("[ \t]+", ignore = true)
             val file by token("file:.*")
+            val function by token("function:.*")
             val version by token("version:.*\n", ignore = true)
 
             //Keywords
-            val function by token("function")
             val lcount by token("lcount")
             val branch by token("branch")
             val notexec by token("notexec")
@@ -75,8 +76,17 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
 
         val govUnder8Grammer = object : GCovCommonGrammar() {
 
-            val functionLine by -function and -colon and num and -comma and num and -comma and word map { (line, count, name) ->
-                Item.Function(line.text.toInt(), -1, count.text.toLong(), name.text)
+            val functionLine by function use {
+                object : Grammar<Item.Function>() {
+
+                    val num by token("\\d+")
+                    val comma by token(",")
+                    val rest by token(".*")
+
+                    override val rootParser by num and -comma and num and -comma and rest map { (line, count, name) ->
+                        Item.Function(line.text.toInt(), -1, count.text.toLong(), name.text)
+                    }
+                }.parseToEnd(text.removePrefix("function:"))
             }
 
             val lcountLine by -lcount and -colon and num and -comma and num map { (line, count) ->
@@ -91,8 +101,17 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
 
         val gcov8Grammer = object : GCovCommonGrammar() {
 
-            val functionLine by -function and -colon and num and -comma and num and -comma and num and -comma and word map { (startLine, endLine, count, name) ->
-                Item.Function(startLine.text.toInt(), endLine.text.toInt(), count.text.toLong(), name.text)
+            val functionLine by function use {
+                object : Grammar<Item.Function>() {
+
+                    val num by token("\\d+")
+                    val comma by token(",")
+                    val rest by token(".*")
+
+                    override val rootParser by num and -comma and num and -comma and num and -comma and rest map { (startLine, endLine, count, name) ->
+                        Item.Function(startLine.text.toInt(), endLine.text.toInt(), count.text.toLong(), name.text)
+                    }
+                }.parseToEnd(text.removePrefix("function:"))
             }
 
             val lcountLine by -lcount and -colon and num and -comma and num and -comma and -num map { (line, count) ->
@@ -108,23 +127,22 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         val result = lines.chunked(ceil(lines.size.toDouble() / Thread.activeCount()).toInt()).map {
             ApplicationManager.getApplication().executeOnPooledThread<List<Item>> {
                 it.map { gcovFile ->
-                    val ast = if (myMajorVersion == 8) {
-                        gcov8Grammer.tryParseToEnd(gcovFile.joinToString("\n"))
-                    } else {
-                        govUnder8Grammer.tryParseToEnd(gcovFile.joinToString("\n"))
-                    }
-                    when (ast) {
-                        is ErrorResult -> {
-                            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                                "Error parsing gcov generated files",
-                                "This is either due to a bug in the plugin or gcov",
-                                "Parser output:$ast",
-                                NotificationType.ERROR
-                            )
-                            Notifications.Bus.notify(notification, project)
-                            emptyList()
+                    try {
+                        val ast = if (myMajorVersion == 8) {
+                            gcov8Grammer.parseToEnd(gcovFile.joinToString("\n"))
+                        } else {
+                            govUnder8Grammer.parseToEnd(gcovFile.joinToString("\n"))
                         }
-                        is Parsed -> ast.value.filter { it !is Item.Branch }
+                        ast.filter { it !is Item.Branch }
+                    } catch (e: ParseException) {
+                        val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
+                            "Error parsing gcov generated files",
+                            "This is either due to a bug in the plugin or gcov",
+                            "Parser output:${e.errorResult}",
+                            NotificationType.ERROR
+                        )
+                        Notifications.Bus.notify(notification, project)
+                        emptyList<Item>()
                     }
                 }.flatten()
             }
@@ -185,7 +203,13 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             }.map { it.absolutePath }.toList()
 
         val processBuilder =
-            ProcessBuilder().command(listOf(myGcov, "-b", "-i", "-m") + files).redirectErrorStream(true)
+            ProcessBuilder().command(
+                listOf(myGcov, "-i", "-m") + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+                    listOf("-b")
+                } else {
+                    emptyList()
+                } + files
+            ).redirectErrorStream(true)
                 .directory(config.configurationGenerationDir)
         val p = processBuilder.start()
         val lines = p.inputStream.bufferedReader().readLines()

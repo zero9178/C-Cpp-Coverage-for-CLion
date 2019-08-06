@@ -27,9 +27,9 @@ class SettingsWindowImpl : SettingsWindow() {
             .subscribe(CPPToolchainsListener.TOPIC, object : CPPToolchainsListener {
                 override fun toolchainsRenamed(renamed: MutableMap<String, String>) {
                     for (renames in renamed) {
-                        val value = myEditorState[renames.key] ?: continue
-                        myEditorState.remove(renames.key)
-                        myEditorState[renames.value] = value
+                        val value = myTempToolchainState[renames.key] ?: continue
+                        myTempToolchainState.remove(renames.key)
+                        myTempToolchainState[renames.value] = value
                     }
                     updateToolChainComboBox()
                 }
@@ -44,14 +44,15 @@ class SettingsWindowImpl : SettingsWindow() {
                                 //I am not sure at all yet if one can assume the order of the notification delivery. For now lets
                                 //just be happy if the order was correct (CoverageGeneratorPaths.kt was called first) and if not
                                 //do an empty string
-                                myEditorState[it.name] = CoverageGeneratorSettings.getInstance().paths.getOrDefault(
+                                myTempToolchainState[it.name] =
+                                    CoverageGeneratorSettings.getInstance().paths.getOrDefault(
                                     it.name,
                                     CoverageGeneratorSettings.GeneratorInfo()
                                 )
                             }
                         } else {
                             group.value.forEach {
-                                myEditorState.remove(it.name)
+                                myTempToolchainState.remove(it.name)
                             }
                         }
                     }
@@ -73,7 +74,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 override fun onFileChosen(chosenFile: VirtualFile) {
                     super.onFileChosen(chosenFile)
                     val selectedItem = myComboBox.selectedItem as? String ?: return
-                    val info = myEditorState[selectedItem]
+                    val info = myTempToolchainState[selectedItem]
                     if (info != null) {
                         info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
                         updateLLVMFields()
@@ -84,7 +85,7 @@ class SettingsWindowImpl : SettingsWindow() {
         myGcovOrllvmCovBrowser.textField.addKeyListener(object : KeyAdapter() {
             override fun keyReleased(e: KeyEvent?) {
                 val selectedItem = myComboBox.selectedItem as? String ?: return
-                val info = myEditorState[selectedItem]
+                val info = myTempToolchainState[selectedItem]
                 if (info != null) {
                     info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
                     updateLLVMFields()
@@ -106,7 +107,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 override fun onFileChosen(chosenFile: VirtualFile) {
                     super.onFileChosen(chosenFile)
                     val selectedItem = myComboBox.selectedItem as? String ?: return
-                    val info = myEditorState[selectedItem]
+                    val info = myTempToolchainState[selectedItem]
                     if (info != null) {
                         info.llvmProfDataPath = myLLVMProfdataBrowser.text
                     }
@@ -116,7 +117,7 @@ class SettingsWindowImpl : SettingsWindow() {
         myLLVMProfdataBrowser.textField.addKeyListener(object : KeyAdapter() {
             override fun keyReleased(e: KeyEvent?) {
                 val selectedItem = myComboBox.selectedItem as? String ?: return
-                val info = myEditorState[selectedItem]
+                val info = myTempToolchainState[selectedItem]
                 if (info != null) {
                     info.llvmProfDataPath = myLLVMProfdataBrowser.text
                 }
@@ -137,7 +138,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 override fun onFileChosen(chosenFile: VirtualFile) {
                     super.onFileChosen(chosenFile)
                     val selectedItem = myComboBox.selectedItem as? String ?: return
-                    val info = myEditorState[selectedItem]
+                    val info = myTempToolchainState[selectedItem]
                     if (info != null) {
                         info.demangler = myDemanglerBrowser.text
                     }
@@ -147,7 +148,7 @@ class SettingsWindowImpl : SettingsWindow() {
         myDemanglerBrowser.textField.addKeyListener(object : KeyAdapter() {
             override fun keyReleased(e: KeyEvent?) {
                 val selectedItem = myComboBox.selectedItem as? String ?: return
-                val info = myEditorState[selectedItem]
+                val info = myTempToolchainState[selectedItem]
                 if (info != null) {
                     info.demangler = myDemanglerBrowser.text
                 }
@@ -163,6 +164,8 @@ class SettingsWindowImpl : SettingsWindow() {
         myIfBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
         myLoopBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
         myBooleanOpBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
+        myUseRunner.isSelected = CoverageGeneratorSettings.getInstance().useCoverageAction
+        myDoBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().branchCoverageEnabled
     }
 
     private fun updateToolChainComboBox() {
@@ -171,9 +174,9 @@ class SettingsWindowImpl : SettingsWindow() {
 
     private fun updateUIAfterItemChange() {
         val toolchainName = myComboBox.selectedItem as? String ?: return
-        myGcovOrllvmCovBrowser.text = myEditorState[toolchainName]?.gcovOrllvmCovPath ?: ""
-        myLLVMProfdataBrowser.text = myEditorState[toolchainName]?.llvmProfDataPath ?: ""
-        myDemanglerBrowser.text = myEditorState[toolchainName]?.demangler ?: ""
+        myGcovOrllvmCovBrowser.text = myTempToolchainState[toolchainName]?.gcovOrllvmCovPath ?: ""
+        myLLVMProfdataBrowser.text = myTempToolchainState[toolchainName]?.llvmProfDataPath ?: ""
+        myDemanglerBrowser.text = myTempToolchainState[toolchainName]?.demangler ?: ""
         updateLLVMFields()
     }
 
@@ -217,7 +220,7 @@ class SettingsWindowImpl : SettingsWindow() {
         myGcovOrLLVMCovLabel.text = if (myLLVMProfLabel.isVisible) "llvm-cov:" else "gcov:"
     }
 
-    private val myEditorState: MutableMap<String, CoverageGeneratorSettings.GeneratorInfo> =
+    private val myTempToolchainState: MutableMap<String, CoverageGeneratorSettings.GeneratorInfo> =
         CoverageGeneratorSettings.getInstance().paths.mapValues { it.value.copy() }.toMutableMap()
 
     //toMutableMap creates a copy of the map instead of copying the reference
@@ -227,17 +230,21 @@ class SettingsWindowImpl : SettingsWindow() {
     }
 
     override fun isModified() =
-        CoverageGeneratorSettings.getInstance().paths != myEditorState || myIfBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
+        CoverageGeneratorSettings.getInstance().paths != myTempToolchainState || myIfBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
                 || myLoopBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
                 || myBooleanOpBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
+                || myDoBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().branchCoverageEnabled
+                || myUseRunner.isSelected != CoverageGeneratorSettings.getInstance().useCoverageAction
 
     override fun getDisplayName() = "C/C++ Coverage"
 
     override fun apply() {
-        CoverageGeneratorSettings.getInstance().paths = myEditorState.mapValues { it.value.copy() }.toMutableMap()
+        CoverageGeneratorSettings.getInstance().paths =
+            myTempToolchainState.mapValues { it.value.copy() }.toMutableMap()
         CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled = myIfBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled = myLoopBranchCoverage.isSelected
-        CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled =
-            myBooleanOpBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled = myBooleanOpBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().useCoverageAction = myUseRunner.isSelected
+        CoverageGeneratorSettings.getInstance().branchCoverageEnabled = myDoBranchCoverage.isSelected
     }
 }

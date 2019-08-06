@@ -45,6 +45,9 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 endif ()
 ```
 
+Alternatively one can enable in the settings to not use auto flag detection. Instead a 'Run Coverage' button will appear
+with which one can explicitly choose to gather coverage data
+
 #### Note:
 When using Clang 8 or older on Windows you'll most likely get a linker error due to the symbol `lprofGetHostName` missing.
 This is due to a bug inside llvm's compiler-rt. To circumvent this add the following lines of code to one of your files:

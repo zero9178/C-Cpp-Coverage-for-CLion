@@ -25,6 +25,8 @@ public abstract class SettingsWindow implements Configurable {
     protected TextFieldWithBrowseButton myDemanglerBrowser;
     private JPanel myPanel;
     private JBLabel myLoading;
+    protected JCheckBox myUseRunner;
+    protected JCheckBox myDoBranchCoverage;
 
     protected void setLoading(boolean loading) {
         myLoading.setIcon(loading ? new AnimatedIcon.Default() : null);

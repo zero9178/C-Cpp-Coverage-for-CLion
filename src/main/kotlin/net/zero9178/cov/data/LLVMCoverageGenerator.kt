@@ -199,13 +199,13 @@ class LLVMCoverageGenerator(
                                                 region.executionCount
                                             )
                                         }),
-                                        findStatementsForBranches(
+                                        if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
                                             regions.first().lineStart to regions.first().lineEnd,
                                             branches,
                                             regions,
                                             environment.toLocalPath(file.filename),
                                             project
-                                        )
+                                        ) else emptyList()
                                     )
                                 }
                             }

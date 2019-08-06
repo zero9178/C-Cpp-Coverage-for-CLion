@@ -23,6 +23,7 @@ import com.jetbrains.cidr.execution.ConfigurationExtensionContext
 import com.jetbrains.cidr.lang.CLanguageKind
 import com.jetbrains.cidr.lang.toolchains.CidrCompilerSwitches
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
+import net.zero9178.cov.actions.STARTED_BY_COVERAGE_BUTTON
 import net.zero9178.cov.data.CoverageFileData
 import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.CoverageGenerator
@@ -34,7 +35,18 @@ import java.nio.file.Paths
 import javax.swing.tree.DefaultMutableTreeNode
 
 class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
-    override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>) = true
+
+    override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>): Boolean {
+        if (configuration !is CMakeAppRunConfiguration) {
+            return false
+        }
+        return if (CoverageGeneratorSettings.getInstance().useCoverageAction) {
+            val startedByCoverageButton: Boolean? = configuration.getUserData(STARTED_BY_COVERAGE_BUTTON)
+            !(startedByCoverageButton == null || startedByCoverageButton == false)
+        } else {
+            true
+        }
+    }
 
     override fun isEnabledFor(
         applicableConfiguration: CidrRunConfiguration<*, out CidrBuildTarget<*>>,
@@ -156,7 +168,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                     "Neither gcov nor llvm-cov specified for ${environment.toolchain.name}",
                     NotificationType.ERROR
                 )
-            Notifications.Bus.notify(notification, configuration.getProject())
+            Notifications.Bus.notify(notification, configuration.project)
             return null
         }
         val coverageGenerator = generator.first
@@ -167,7 +179,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                         "Coverage could not be generated due to following error: ${generator.second}",
                         NotificationType.ERROR
                     )
-                Notifications.Bus.notify(notification, configuration.getProject())
+                Notifications.Bus.notify(notification, configuration.project)
             }
             return null
         }

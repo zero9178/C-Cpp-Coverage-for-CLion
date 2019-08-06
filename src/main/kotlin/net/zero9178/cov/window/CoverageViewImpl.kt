@@ -20,6 +20,7 @@ import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
 import net.zero9178.cov.editor.CoverageHighlighter
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.Component
 import java.awt.Graphics
 import java.awt.event.MouseAdapter
@@ -187,8 +188,8 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                 getColumnInfo()
             ) {
                 override fun getChildCount(parent: Any?): Int {
-                    if (myIncludeNonProjectSources.isSelected || parent == null || parent !is DefaultMutableTreeNode || !parent.isRoot) {
-                        return super.getChildCount(parent)
+                    return if (myIncludeNonProjectSources.isSelected || parent == null || parent !is DefaultMutableTreeNode || !parent.isRoot) {
+                        super.getChildCount(parent)
                     } else {
                         var count = 0
                         for (i in 0 until parent.childCount) {
@@ -197,7 +198,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                                 count++
                             }
                         }
-                        return count
+                        count
                     }
                 }
 
@@ -303,32 +304,36 @@ private class ProgressBarColumn(
 
 private fun getColumnInfo(): Array<ColumnInfo<*, *>> {
 
-    return arrayOf(
-        TreeColumnInfo("File/Function"),
-        ProgressBarColumn("Branch coverage", {
-            100
-        }) {
-            getBranchCoverage(it.userObject)
-        },
-        ProgressBarColumn("Line/Region coverage", {
-            getMaxLineCoverage(it.userObject)
-        }) {
-            fun fromFunctionData(it: CoverageFunctionData): Long {
-                return when (it.coverage) {
-                    is FunctionLineData -> it.coverage.data.count { entry -> entry.value > 0 }.toLong()
-                    is FunctionRegionData -> it.coverage.data.count { region -> region.executionCount > 0 }.toLong()
-                }
-            }
-
-            when (val userObject = it.userObject) {
-                is CoverageFunctionData -> fromFunctionData(userObject)
-                is CoverageFileData -> {
-                    userObject.functions.values.map(::fromFunctionData).sum()
-                }
-                else -> 0
+    val fileInfo = TreeColumnInfo("File/Function")
+    val branchInfo = ProgressBarColumn("Branch coverage", {
+        100
+    }) {
+        getBranchCoverage(it.userObject)
+    }
+    val lineInfo = ProgressBarColumn("Line/Region coverage", {
+        getMaxLineCoverage(it.userObject)
+    }) {
+        fun fromFunctionData(it: CoverageFunctionData): Long {
+            return when (it.coverage) {
+                is FunctionLineData -> it.coverage.data.count { entry -> entry.value > 0 }.toLong()
+                is FunctionRegionData -> it.coverage.data.count { region -> region.executionCount > 0 }.toLong()
             }
         }
-    )
+
+        when (val userObject = it.userObject) {
+            is CoverageFunctionData -> fromFunctionData(userObject)
+            is CoverageFileData -> {
+                userObject.functions.values.map(::fromFunctionData).sum()
+            }
+            else -> 0
+        }
+    }
+
+    return if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+        arrayOf(fileInfo, branchInfo, lineInfo)
+    } else {
+        arrayOf(fileInfo, lineInfo)
+    }
 }
 
 private fun getCurrentLineCoverage(functionOrFileData: Any): Long {

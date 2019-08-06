@@ -35,7 +35,9 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
         var paths: MutableMap<String, GeneratorInfo> = mutableMapOf(),
         var ifBranchCoverageEnabled: Boolean = true,
         var loopBranchCoverageEnabled: Boolean = true,
-        var booleanOpBranchCoverageEnabled: Boolean = false
+        var booleanOpBranchCoverageEnabled: Boolean = false,
+        var branchCoverageEnabled: Boolean = true,
+        var useCoverageAction: Boolean = false
     )
 
     private var myState: State = State()
@@ -70,19 +72,31 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
             myState.booleanOpBranchCoverageEnabled = value
         }
 
+    var branchCoverageEnabled: Boolean
+        get() = myState.branchCoverageEnabled
+        set(value) {
+            myState.branchCoverageEnabled = value
+        }
+
+    var useCoverageAction: Boolean
+        get() = myState.useCoverageAction
+        set(value) {
+            myState.useCoverageAction = value
+        }
+
     fun getGeneratorFor(toolchain: String) = myGenerators[toolchain]
 
     override fun getState() = myState
 
     override fun loadState(state: State) {
-        state.paths.forEach {
-            if (myState.paths.contains(it.key)) {
-                myState.paths[it.key] = it.value
+        val paths = myState.paths
+        myState = state
+        myState.paths.forEach {
+            if (paths.contains(it.key)) {
+                paths[it.key] = it.value
             }
         }
-        myState.ifBranchCoverageEnabled = state.ifBranchCoverageEnabled
-        myState.booleanOpBranchCoverageEnabled = state.booleanOpBranchCoverageEnabled
-        myState.loopBranchCoverageEnabled = state.loopBranchCoverageEnabled
+        myState.paths = paths
         ensurePopulatedPaths()
     }
 

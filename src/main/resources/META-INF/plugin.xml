@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.zero9178</id>
     <name>C/C++ Coverage</name>
-    <version>2.0.1</version>
+    <version>2.0.2</version>
     <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
@@ -14,8 +14,9 @@
     -->
 
     <change-notes><![CDATA[
+      2.0.2: Added two new options: One can now choose between running automatically by detecting compiler flags or using an explicit coverage run button and one can now disable branch coverage completely<br/>
       2.0.1: Fixed bug with exception thrown when using a macro defined in another file due to trying to look up the AST structure of the wrong file. Better Multithreading and therefore
-      performance improvement for Clang
+      performance improvement for Clang<br/>
       2.0.0: Rewrote almost all of the plugin. Supported compilers are now Clang 5 onwards, GCC 6 onwards. Recommended Compilers are Clang 6 onwards and gcc 9 onwards.
       Remade GUI for both displaying coverage as well as for the settings menu. Settings menu now tries to guess current gcov or llvm-cov for the toolchain if not manually configured.
       Implemented Branch Coverage for both Clang and GCC 9, which is shown in the toolwindow as well as in the Editor using Inlays. GCC uses Line coverage to show which lines have been covered.
@@ -38,6 +39,14 @@ For further details, known issues and differences of compilers see <a href="http
 
     <depends>com.intellij.modules.clion</depends>
     <depends>com.intellij.modules.lang</depends>
+
+    <actions>
+        <action class="net.zero9178.cov.actions.CoverageButton" description="Run with Coverage"
+                icon="AllIcons.General.RunWithCoverage">
+            <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
+            <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
+        </action>
+    </actions>
 
     <application-components>
         <component>
