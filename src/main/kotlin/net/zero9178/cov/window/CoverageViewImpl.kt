@@ -25,6 +25,7 @@ import java.awt.Component
 import java.awt.Graphics
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseEvent.BUTTON1
 import java.nio.file.Paths
 import javax.swing.*
 import javax.swing.table.TableCellRenderer
@@ -33,13 +34,69 @@ import javax.swing.tree.DefaultTreeModel
 
 class CoverageViewImpl(val project: Project) : CoverageView() {
 
+    private fun sort(
+        ascending: Boolean,
+        fileComparator: (CoverageFileData, CoverageFileData) -> Int,
+        functionComparator: (CoverageFunctionData, CoverageFunctionData) -> Int
+    ) =
+        TreeUtil.sort(myTreeTableView.tableModel as DefaultTreeModel) { lhs: Any, rhs: Any ->
+            lhs as DefaultMutableTreeNode
+            rhs as DefaultMutableTreeNode
+            val lhsUS = lhs.userObject
+            val rhsUS = rhs.userObject
+            if (lhsUS is CoverageFileData && rhsUS is CoverageFileData) {
+                if (ascending) {
+                    fileComparator(lhsUS, rhsUS)
+                } else {
+                    fileComparator(rhsUS, lhsUS)
+                }
+            } else if (lhsUS is CoverageFunctionData && rhsUS is CoverageFunctionData) {
+                if (ascending) {
+                    functionComparator(lhsUS, rhsUS)
+                } else {
+                    functionComparator(rhsUS, lhsUS)
+                }
+            } else {
+                0
+            }
+        }
+
+    private class FunctionComparator(private val col: Int) : (CoverageFunctionData, CoverageFunctionData) -> Int {
+        override operator fun invoke(lhs: CoverageFunctionData, rhs: CoverageFunctionData) =
+            when (col) {
+                0 -> lhs.functionName.compareTo(rhs.functionName)
+                1 -> getBranchCoverage(lhs).compareTo(getBranchCoverage(rhs))
+                else -> (getCurrentLineCoverage(lhs).toDouble() / getMaxLineCoverage(lhs)).compareTo(
+                    (getCurrentLineCoverage(
+                        rhs
+                    ).toDouble() / getMaxLineCoverage(rhs))
+                )
+            }
+    }
+
+    private class FileComparator(private val col: Int) : (CoverageFileData, CoverageFileData) -> Int {
+        override fun invoke(lhs: CoverageFileData, rhs: CoverageFileData) = when (col) {
+            0 -> lhs.filePath.compareTo(rhs.filePath)
+            1 -> getBranchCoverage(lhs).compareTo(getBranchCoverage(rhs))
+            else -> (getCurrentLineCoverage(lhs).toDouble() / getMaxLineCoverage(lhs)).compareTo(
+                (getCurrentLineCoverage(
+                    rhs
+                ).toDouble() / getMaxLineCoverage(rhs))
+            )
+        }
+    }
+
+    private var mySorting = MutableList(myTreeTableView.columnCount) {
+        SortOrder.UNSORTED
+    }
+
     override fun createUIComponents() {
         myTreeTableView =
             TreeTableView(ListTreeTableModelOnColumns(DefaultMutableTreeNode("empty-root"), getColumnInfo()))
         myTreeTableView.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
                 e ?: return
-                if (e.clickCount != 2) {
+                if (e.clickCount != 2 || e.button != BUTTON1) {
                     return
                 }
 
@@ -66,81 +123,33 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                 }
             }
         })
-        val sorting = MutableList(myTreeTableView.columnCount) {
-            SortOrder.UNSORTED
-        }
         myTreeTableView.tableHeader.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
                 e ?: return
-                myTreeTableView.clearSelection()
-                val col = myTreeTableView.columnAtPoint(e.point)
-                if (col > sorting.lastIndex) {
+                if (e.button != BUTTON1) {
                     return
                 }
-                val sort =
-                    { ascending: Boolean, fileComparator: (CoverageFileData, CoverageFileData) -> Int, functionComparator: (CoverageFunctionData, CoverageFunctionData) -> Int ->
-                        TreeUtil.sort(myTreeTableView.tableModel as DefaultTreeModel) { lhs: Any, rhs: Any ->
-                            lhs as DefaultMutableTreeNode
-                            rhs as DefaultMutableTreeNode
-                            val lhsUS = lhs.userObject
-                            val rhsUS = rhs.userObject
-                            if (lhsUS is CoverageFileData && rhsUS is CoverageFileData) {
-                                if (ascending) {
-                                    fileComparator(lhsUS, rhsUS)
-                                } else {
-                                    fileComparator(rhsUS, lhsUS)
-                                }
-                            } else if (lhsUS is CoverageFunctionData && rhsUS is CoverageFunctionData) {
-                                if (ascending) {
-                                    functionComparator(lhsUS, rhsUS)
-                                } else {
-                                    functionComparator(rhsUS, lhsUS)
-                                }
-                            } else {
-                                0
-                            }
-                        }
-                    }
-
-                val functionComparator = { lhs: CoverageFunctionData, rhs: CoverageFunctionData ->
-                    when (col) {
-                        0 -> lhs.functionName.compareTo(rhs.functionName)
-                        1 -> getBranchCoverage(lhs).compareTo(getBranchCoverage(rhs))
-                        else -> (getCurrentLineCoverage(lhs).toDouble() / getMaxLineCoverage(lhs)).compareTo(
-                            (getCurrentLineCoverage(
-                                rhs
-                            ).toDouble() / getMaxLineCoverage(rhs))
-                        )
-                    }
+                myTreeTableView.clearSelection()
+                val col = myTreeTableView.columnAtPoint(e.point)
+                if (col > mySorting.lastIndex) {
+                    return
                 }
 
-                val fileComparator = { lhs: CoverageFileData, rhs: CoverageFileData ->
-                    when (col) {
-                        0 -> lhs.filePath.compareTo(rhs.filePath)
-                        1 -> getBranchCoverage(lhs).compareTo(getBranchCoverage(rhs))
-                        else -> (getCurrentLineCoverage(lhs).toDouble() / getMaxLineCoverage(lhs)).compareTo(
-                            (getCurrentLineCoverage(
-                                rhs
-                            ).toDouble() / getMaxLineCoverage(rhs))
-                        )
-                    }
-                }
-
-                sorting[col] = when (sorting[col]) {
+                mySorting[col] = when (mySorting[col]) {
                     SortOrder.ASCENDING -> {
-                        sort(false, fileComparator, functionComparator)
+                        sort(false, FileComparator(col), FunctionComparator(col))
                         SortOrder.DESCENDING
                     }
                     SortOrder.DESCENDING, SortOrder.UNSORTED -> {
-                        sort(true, fileComparator, functionComparator)
+                        sort(true, FileComparator(col), FunctionComparator(col))
                         SortOrder.ASCENDING
                     }
                 }
-                for (i in 0..sorting.lastIndex) {
+                for (i in 0..mySorting.lastIndex) {
                     if (i == col) {
                         continue
                     } else {
-                        sorting[i] = SortOrder.UNSORTED
+                        mySorting[i] = SortOrder.UNSORTED
                     }
                 }
                 myTreeTableView.updateUI()
@@ -157,10 +166,10 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                     row,
                     column
                 )
-                if (column > sorting.lastIndex || c !is JLabel) {
+                if (column > mySorting.lastIndex || c !is JLabel) {
                     c
                 } else {
-                    c.icon = when (sorting[column]) {
+                    c.icon = when (mySorting[column]) {
                         SortOrder.ASCENDING -> UIManager.getIcon("Table.ascendingSortIcon")
                         SortOrder.DESCENDING -> UIManager.getIcon("Table.descendingSortIcon")
                         SortOrder.UNSORTED -> null
@@ -182,6 +191,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
     }
 
     override fun setRoot(treeNode: DefaultMutableTreeNode?) {
+        val list = TreeUtil.collectExpandedUserObjects(myTreeTableView.tree).filterIsInstance<CoverageFileData>()
         myTreeTableView.setModel(
             object : ListTreeTableModelOnColumns(
                 treeNode ?: DefaultMutableTreeNode("empty-root"),
@@ -221,8 +231,33 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                 }
             }
         )
+        TreeUtil.treeNodeTraverser(treeNode).forEach { node ->
+            if (node !is DefaultMutableTreeNode) return@forEach
+            val file = node.userObject as? CoverageFileData ?: return@forEach
+            if (list.any { it.filePath == file.filePath }) {
+                myTreeTableView.tree.expandPath(TreeUtil.getPathFromRoot(node))
+            }
+        }
+        if (mySorting.size != myTreeTableView.columnCount) {
+            mySorting = MutableList(myTreeTableView.columnCount) {
+                SortOrder.UNSORTED
+            }
+        }
         myTreeTableView.setRootVisible(false)
         myTreeTableView.setMinRowHeight((myTreeTableView.font.size * 1.75).toInt())
+        loop@ for (i in 0 until myTreeTableView.columnCount) {
+            myTreeTableView.clearSelection()
+            when (mySorting[i]) {
+                SortOrder.UNSORTED -> continue@loop
+                SortOrder.ASCENDING -> {
+                    sort(true, FileComparator(i), FunctionComparator(i))
+                }
+                SortOrder.DESCENDING -> {
+                    sort(false, FileComparator(i), FunctionComparator(i))
+                }
+            }
+            myTreeTableView.updateUI()
+        }
     }
 }
 
