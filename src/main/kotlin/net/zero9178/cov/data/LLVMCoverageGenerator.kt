@@ -18,6 +18,7 @@ import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
 import com.jetbrains.cidr.lang.psi.OCIfStatement
 import com.jetbrains.cidr.lang.psi.OCLoopStatement
 import com.jetbrains.cidr.lang.psi.OCStatement
@@ -138,8 +139,13 @@ class LLVMCoverageGenerator(
             ?: return CoverageData(emptyMap())
 
         val mangledNames = root.data.map { data -> data.functions.map { it.name } }.flatten()
-        val demangledNames = if (myDemangler != null && Paths.get(myDemangler).exists()) {
-            val p = ProcessBuilder().command(myDemangler).redirectErrorStream(true).start()
+        val demangledNames = if (myDemangler != null && Paths.get(environment.toLocalPath(myDemangler)).exists()) {
+            val p = ProcessBuilder().command(
+                (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
+                    environment.toolchain.toolSetPath,
+                    "run"
+                ) else emptyList()) + listOf(myDemangler)
+            ).redirectErrorStream(true).start()
             var result = listOf<String>()
             p.outputStream.bufferedWriter().use { writer ->
                 p.inputStream.bufferedReader().use { reader ->
@@ -330,11 +336,15 @@ class LLVMCoverageGenerator(
             ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
 
         val llvmProf = ProcessBuilder().command(
-            listOf(
+            (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
+                environment.toolchain.toolSetPath,
+                "run"
+            ) else emptyList())
+                    + listOf(
                 myLLVMProf,
                 "merge",
                 "-output=${config.target.name}.profdata"
-            ) + files.map { it.absolutePath }
+            ) + files.map { environment.toEnvPath(it.absolutePath) }
         ).directory(config.configurationGenerationDir).start()
         var retCode = llvmProf.waitFor()
         var lines = llvmProf.errorStream.bufferedReader().readLines()
@@ -351,11 +361,17 @@ class LLVMCoverageGenerator(
         files.forEach { it.delete() }
 
         val processBuilder = ProcessBuilder().command(
-            myLLVMCov,
-            "export",
-            "-instr-profile",
-            "${config.target.name}.profdata",
-            config.productFile?.absolutePath ?: ""
+            (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
+                environment.toolchain.toolSetPath,
+                "run"
+            ) else emptyList()) +
+                    listOf(
+                        myLLVMCov,
+                        "export",
+                        "-instr-profile",
+                        "${config.target.name}.profdata",
+                        environment.toEnvPath(config.productFile?.absolutePath ?: "")
+                    )
         ).directory(config.configurationGenerationDir).redirectErrorStream(true)
         val llvmCov = processBuilder.start()
         lines = llvmCov.inputStream.bufferedReader().readLines()

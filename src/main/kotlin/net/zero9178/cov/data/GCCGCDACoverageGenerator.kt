@@ -12,8 +12,8 @@ import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
 import net.zero9178.cov.notification.CoverageNotification
-import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.math.ceil
@@ -200,15 +200,15 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         val files =
             config.configurationGenerationDir.walkTopDown().filter {
                 it.isFile && it.name.endsWith(".gcda")
-            }.map { it.absolutePath }.toList()
+            }.map { environment.toEnvPath(it.absolutePath) }.toList()
 
         val processBuilder =
             ProcessBuilder().command(
-                listOf(myGcov, "-i", "-m") + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
-                    listOf("-b")
-                } else {
-                    emptyList()
-                } + files
+                (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
+                    environment.toolchain.toolSetPath,
+                    "run"
+                ) else emptyList()) +
+                        listOf(myGcov, "-i", "-m") + files
             ).redirectErrorStream(true)
                 .directory(config.configurationGenerationDir)
         val p = processBuilder.start()
@@ -225,7 +225,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             return null
         }
 
-        files.forEach { Files.deleteIfExists(Paths.get(it)) }
+        files.forEach { Files.deleteIfExists(Paths.get(environment.toLocalPath(it))) }
 
         val filter = config.configurationGenerationDir.listFiles()?.filter {
             it.isFile && it.name.endsWith(".gcov")

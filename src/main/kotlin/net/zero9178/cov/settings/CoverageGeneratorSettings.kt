@@ -6,10 +6,7 @@ import com.intellij.openapi.components.RoamingType
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.util.io.exists
-import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
-import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener
-import com.jetbrains.cidr.cpp.toolchains.MinGW
-import com.jetbrains.cidr.cpp.toolchains.NativeUnixToolSet
+import com.jetbrains.cidr.cpp.toolchains.*
 import com.jetbrains.cidr.toolchains.OSType
 import net.zero9178.cov.data.CoverageGenerator
 import net.zero9178.cov.data.getGeneratorFor
@@ -101,26 +98,33 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     }
 
     private fun ensurePopulatedPaths() {
-        if (paths.isEmpty()) {
-            paths = CPPToolchains.getInstance().toolchains.associateBy({ it.name }, {
-                guessCoverageGeneratorForToolchain(it)
-            }).toMutableMap()
-        } else {
-            paths = paths.mapValues {
-                if (it.value.gcovOrllvmCovPath.isNotEmpty()) {
-                    it.value
-                } else {
-                    val toolchain =
-                        CPPToolchains.getInstance().toolchains.find { toolchain -> toolchain.name == it.key }
-                            ?: return@mapValues GeneratorInfo()
-                    guessCoverageGeneratorForToolchain(toolchain)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            if (paths.isEmpty()) {
+                paths = CPPToolchains.getInstance().toolchains.associateBy({ it.name }, {
+                    guessCoverageGeneratorForToolchain(it)
+                }).toMutableMap()
+            } else {
+                paths = paths.mapValues {
+                    if (it.value.gcovOrllvmCovPath.isNotEmpty()) {
+                        it.value
+                    } else {
+                        val toolchain =
+                            CPPToolchains.getInstance().toolchains.find { toolchain -> toolchain.name == it.key }
+                                ?: return@mapValues GeneratorInfo()
+                        guessCoverageGeneratorForToolchain(toolchain)
+                    }
                 }
             }
         }
     }
 
     private fun generateGeneratorFor(name: String, info: GeneratorInfo) {
-        myGenerators[name] = getGeneratorFor(info.gcovOrllvmCovPath, info.llvmProfDataPath, info.demangler)
+        myGenerators[name] = getGeneratorFor(
+            info.gcovOrllvmCovPath,
+            info.llvmProfDataPath,
+            info.demangler,
+            CPPToolchains.getInstance().toolchains.find { it.name == name }?.wsl
+        )
     }
 
     init {
@@ -169,9 +173,10 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
 private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchain): CoverageGeneratorSettings.GeneratorInfo {
     val toolset = toolchain.toolSet
     var compiler =
-        toolchain.customCXXCompilerPath ?: System.getenv("CXX")?.ifBlank { System.getenv("CC") }
+        toolchain.customCXXCompilerPath
+            ?: if (toolset !is WSL) System.getenv("CXX")?.ifBlank { System.getenv("CC") } else null
     //Lets not deal with WSL yet
-    return if (toolset is MinGW || toolset is NativeUnixToolSet) {
+    return if (toolset is MinGW || toolset is NativeUnixToolSet || toolset is WSL) {
 
         val findExe = { prefix: String, name: String, suffix: String, extraPath: Path ->
             val insideSameDir = extraPath.toFile().listFiles()?.asSequence()?.map {
@@ -179,18 +184,21 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
             }?.filterNotNull()?.maxBy {
                 it.value.length
             }?.value
-            if (insideSameDir != null) {
-                extraPath.resolve(insideSameDir).toString()
-            } else {
-                val pair = System.getenv("PATH").splitToSequence(File.pathSeparatorChar).asSequence().map {
-                    Paths.get(it).toFile()
-                }.map { path ->
-                    val result = path.listFiles()?.asSequence()?.map {
-                        it to "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
-                    }?.filter { it.second != null }?.map { it.first to it.second!! }?.maxBy { it.second.value.length }
-                    result
-                }.filterNotNull().maxBy { it.second.value.length }
-                pair?.first?.absolutePath
+            when {
+                insideSameDir != null -> extraPath.resolve(insideSameDir).toString()
+                toolset !is WSL -> {
+                    val pair = System.getenv("PATH").splitToSequence(File.pathSeparatorChar).asSequence().map {
+                        Paths.get(it).toFile()
+                    }.map { path ->
+                        val result = path.listFiles()?.asSequence()?.map {
+                            it to "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
+                        }?.filter { it.second != null }?.map { it.first to it.second!! }
+                            ?.maxBy { it.second.value.length }
+                        result
+                    }.filterNotNull().maxBy { it.second.value.length }
+                    pair?.first?.absolutePath
+                }
+                else -> null
             }
         }
 
@@ -206,19 +214,43 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
 
             val suffix = compilerName.substringAfter(clangName)
 
-            val covPath = findExe(prefix, "llvm-cov", suffix, Paths.get(compiler).parent)
+            val covPath = findExe(
+                prefix,
+                "llvm-cov",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
 
-            val profPath = findExe(prefix, "llvm-profdata", suffix, Paths.get(compiler).parent)
+            val profPath = findExe(
+                prefix,
+                "llvm-profdata",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
 
-            val llvmFilt = findExe(prefix, "llvm-cxxfilt", suffix, Paths.get(compiler).parent)
+            val llvmFilt = findExe(
+                prefix,
+                "llvm-cxxfilt",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
+
+            val finalFilt = llvmFilt ?: findExe(
+                prefix,
+                "c++filt",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
 
             return if (profPath == null || covPath == null) {
                 CoverageGeneratorSettings.GeneratorInfo()
             } else {
                 CoverageGeneratorSettings.GeneratorInfo(
-                    covPath,
-                    profPath,
-                    llvmFilt ?: findExe(prefix, "c++filt", suffix, Paths.get(compiler).parent)
+                    if (toolset is WSL) toolset.toEnvPath(covPath) else covPath,
+                    if (toolset is WSL) toolset.toEnvPath(profPath) else profPath,
+                    if (finalFilt != null) {
+                        if (toolset is WSL) toolset.toEnvPath(finalFilt) else finalFilt
+                    } else null
                 )
             }
         } else if (compiler == null) {
@@ -242,9 +274,14 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
 
         val suffix = compilerName.substringAfter(gccName)
 
-        val gcovPath = findExe(prefix, "gcov", suffix, Paths.get(compiler).parent)
+        val gcovPath = findExe(
+            prefix,
+            "gcov",
+            suffix,
+            Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+        )
         if (gcovPath != null) {
-            CoverageGeneratorSettings.GeneratorInfo(gcovPath)
+            CoverageGeneratorSettings.GeneratorInfo(if (toolset is WSL) toolset.toEnvPath(gcovPath) else gcovPath)
         } else {
             CoverageGeneratorSettings.GeneratorInfo()
         }

@@ -5,6 +5,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.cpp.toolchains.WSL
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 
@@ -38,15 +39,21 @@ private fun extractVersion(line: String): Triple<Int, Int, Int> {
 fun getGeneratorFor(
     executable: String,
     maybeOptionalLLVMProf: String?,
-    optionalDemangler: String?
+    optionalDemangler: String?,
+    wsl: WSL?
 ): Pair<CoverageGenerator?, String?> {
     if (executable.isBlank()) {
         return null to "No executable specified"
     }
-    if (!Paths.get(executable).exists()) {
+    if (!Paths.get(if (wsl == null) executable else wsl.toLocalPath(null, executable)).exists()) {
         return null to "Executable does not exist"
     }
-    val p = ProcessBuilder(executable, "--version").start()
+    val p = ProcessBuilder(
+        (if (wsl != null) listOf(wsl.homePath, "run") else emptyList()) + listOf(
+            executable,
+            "--version"
+        )
+    ).start()
     val lines = p.inputStream.bufferedReader().readLines()
     if (!p.waitFor(5, TimeUnit.SECONDS)) {
         return null to "Executable timed out"

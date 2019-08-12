@@ -8,6 +8,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener
+import com.jetbrains.cidr.cpp.toolchains.WSL
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
@@ -46,9 +47,9 @@ class SettingsWindowImpl : SettingsWindow() {
                                 //do an empty string
                                 myTempToolchainState[it.name] =
                                     CoverageGeneratorSettings.getInstance().paths.getOrDefault(
-                                    it.name,
-                                    CoverageGeneratorSettings.GeneratorInfo()
-                                )
+                                        it.name,
+                                        CoverageGeneratorSettings.GeneratorInfo()
+                                    )
                             }
                         } else {
                             group.value.forEach {
@@ -77,7 +78,7 @@ class SettingsWindowImpl : SettingsWindow() {
                     val info = myTempToolchainState[selectedItem]
                     if (info != null) {
                         info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
-                        updateLLVMFields()
+                        updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
                     }
                 }
             }
@@ -88,7 +89,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 val info = myTempToolchainState[selectedItem]
                 if (info != null) {
                     info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
-                    updateLLVMFields()
+                    updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
                 }
             }
         })
@@ -174,13 +175,16 @@ class SettingsWindowImpl : SettingsWindow() {
 
     private fun updateUIAfterItemChange() {
         val toolchainName = myComboBox.selectedItem as? String ?: return
+        val wsl = CPPToolchains.getInstance().toolchains.find {
+            it.name == toolchainName
+        }?.wsl
         myGcovOrllvmCovBrowser.text = myTempToolchainState[toolchainName]?.gcovOrllvmCovPath ?: ""
         myLLVMProfdataBrowser.text = myTempToolchainState[toolchainName]?.llvmProfDataPath ?: ""
         myDemanglerBrowser.text = myTempToolchainState[toolchainName]?.demangler ?: ""
-        updateLLVMFields()
+        updateLLVMFields(wsl)
     }
 
-    private fun updateLLVMFields() {
+    private fun updateLLVMFields(wsl: WSL?) {
         if (myGcovOrllvmCovBrowser.text.isBlank()) {
             myErrors.text = "No executable specified"
             myErrors.icon = AllIcons.General.Warning
@@ -191,7 +195,13 @@ class SettingsWindowImpl : SettingsWindow() {
             myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        if (!Paths.get(myGcovOrllvmCovBrowser.text).exists()) {
+        if (if (wsl == null) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else !Paths.get(
+                wsl.toLocalPath(
+                    null,
+                    myGcovOrllvmCovBrowser.text
+                )
+            ).exists()
+        ) {
             myErrors.text = "'${myGcovOrllvmCovBrowser.text}' is not a valid path to an executable"
             myErrors.icon = AllIcons.General.Warning
             myLLVMProfLabel.isVisible = false

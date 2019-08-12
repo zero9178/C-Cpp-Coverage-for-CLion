@@ -20,6 +20,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
@@ -401,11 +402,20 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         val files =
             config.configurationGenerationDir.walkTopDown().filter {
                 it.isFile && it.name.endsWith(".gcda")
-            }.map { it.absolutePath }.toList()
+            }.map { environment.toEnvPath(it.absolutePath) }.toList()
 
         val processBuilder =
             ProcessBuilder().command(
-                listOf(myGcov, "-i", "-m", "-t") + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+                (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
+                    environment.toolchain.toolSetPath,
+                    "run"
+                ) else emptyList()) +
+                        listOf(
+                            myGcov,
+                            "-i",
+                            "-m",
+                            "-t"
+                        ) + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
                     listOf("-b")
                 } else {
                     emptyList()
@@ -425,7 +435,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             return null
         }
 
-        files.forEach { Files.deleteIfExists(Paths.get(it)) }
+        files.forEach { Files.deleteIfExists(Paths.get(environment.toLocalPath(it))) }
 
         return processJson(lines, environment, configuration.project)
     }
