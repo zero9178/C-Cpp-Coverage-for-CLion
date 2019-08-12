@@ -104,8 +104,8 @@ class LLVMCoverageGenerator(
                         (array[0] as Number).toInt(),
                         (array[1] as Number).toInt(),
                         (array[2] as Number).toLong(),
-                        array[3] as Boolean,
-                        array[4] as Boolean
+                        if (array[3] is Boolean) array[3] as Boolean else array[3] as Number != 0,
+                        if (array[4] is Boolean) array[4] as Boolean else array[4] as Number != 0
                     )
                 }
 
