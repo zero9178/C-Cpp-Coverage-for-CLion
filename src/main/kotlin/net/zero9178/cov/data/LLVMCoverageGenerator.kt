@@ -178,17 +178,59 @@ class LLVMCoverageGenerator(
 
             data.files.map { file ->
                 val entries = file.segments.filter { it.isRegionEntry }
+                val activeCount = 1//Thread.activeCount()
                 CoverageFileData(
                     environment.toLocalPath(file.filename).replace('\\', '/'),
                     funcMap.getOrDefault(
                         file.filename,
                         emptyList()
-                    ).chunked(ceil(data.files.size / Thread.activeCount().toDouble()).toInt()).map { functions ->
+                    ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
                         ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFunctionData>> {
                             functions.fold(emptyList()) { result, function ->
 
-                                val regions =
+                                val filter =
                                     function.regions.filter { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
+                                val regions =
+                                    filter
+                                        .fold(
+                                            emptyList<Region>()
+                                        ) { regionResult, region ->
+                                            if (regionResult.isEmpty()) {
+                                                regionResult + region
+                                            } else {
+                                                val last =
+                                                    regionResult.indexOfFirst { it.lineEnd > region.lineStart || it.columnEnd > region.columnStart }
+                                                if (last > 0) {
+                                                    regionResult.subList(0, last) + Region(
+                                                        regionResult[last].lineStart,
+                                                        regionResult[last].columnStart,
+                                                        region.lineStart,
+                                                        region.columnStart - 1,
+                                                        regionResult[last].executionCount,
+                                                        regionResult[last].fileId,
+                                                        regionResult[last].expandedFileId,
+                                                        regionResult[last].regionKind
+                                                    ) + region + if (region.lineEnd == regionResult[last].lineEnd && region.columnEnd == regionResult[last].columnEnd) {
+                                                        emptyList()
+                                                    } else {
+                                                        listOf(
+                                                            Region(
+                                                                region.lineEnd,
+                                                                region.columnEnd + 1,
+                                                                regionResult[last].lineEnd,
+                                                                regionResult[last].columnEnd,
+                                                                regionResult[last].executionCount,
+                                                                regionResult[last].fileId,
+                                                                regionResult[last].expandedFileId,
+                                                                regionResult[last].regionKind
+                                                            )
+                                                        )
+                                                    } + regionResult.subList(last + 1, regionResult.size)
+                                                } else {
+                                                    regionResult + region
+                                                }
+                                            }
+                                        }
                                 if (regions.isEmpty()) {
                                     result
                                 } else {
