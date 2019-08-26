@@ -195,41 +195,15 @@ class LLVMCoverageGenerator(
                                         .fold(
                                             emptyList<Region>()
                                         ) { regionResult, region ->
-                                            if (regionResult.isEmpty()) {
-                                                regionResult + region
-                                            } else {
-                                                val last =
-                                                    regionResult.indexOfFirst { it.lineEnd > region.lineStart || it.columnEnd > region.columnStart }
-                                                if (last > 0) {
-                                                    regionResult.subList(0, last) + Region(
-                                                        regionResult[last].lineStart,
-                                                        regionResult[last].columnStart,
-                                                        region.lineStart,
-                                                        region.columnStart - 1,
-                                                        regionResult[last].executionCount,
-                                                        regionResult[last].fileId,
-                                                        regionResult[last].expandedFileId,
-                                                        regionResult[last].regionKind
-                                                    ) + region + if (region.lineEnd == regionResult[last].lineEnd && region.columnEnd == regionResult[last].columnEnd) {
-                                                        emptyList()
-                                                    } else {
-                                                        listOf(
-                                                            Region(
-                                                                region.lineEnd,
-                                                                region.columnEnd + 1,
-                                                                regionResult[last].lineEnd,
-                                                                regionResult[last].columnEnd,
-                                                                regionResult[last].executionCount,
-                                                                regionResult[last].fileId,
-                                                                regionResult[last].expandedFileId,
-                                                                regionResult[last].regionKind
-                                                            )
-                                                        )
-                                                    } + regionResult.subList(last + 1, regionResult.size)
-                                                } else {
-                                                    regionResult + region
-                                                }
-                                            }
+                                            val after =
+                                                regionResult.indexOfFirst { it.lineEnd > region.lineEnd || (it.lineEnd == region.lineEnd && it.columnEnd >= region.columnEnd) }
+                                            if (after >= 0) {
+                                                val afterRegion = regionResult[after]
+                                                regionResult.slice(0 until after) + intersectRegions(
+                                                    afterRegion,
+                                                    region
+                                                ) + regionResult.slice(after + 1..regionResult.lastIndex)
+                                            } else regionResult + region
                                         }
                                 if (regions.isEmpty()) {
                                     result
@@ -263,6 +237,74 @@ class LLVMCoverageGenerator(
 
 
         }.flatten().associateBy { it.filePath })
+    }
+
+    private fun intersectRegions(regionOne: Region, regionTwo: Region): List<Region> {
+        val result = mutableListOf<Region>()
+
+        val first =
+            if (regionOne.lineStart < regionTwo.lineStart
+                || (regionOne.lineStart == regionTwo.lineStart && regionOne.columnStart < regionTwo.columnStart)
+            )
+                regionOne else regionTwo
+        val second = if (first === regionOne) regionTwo else regionOne
+
+        if (second.lineStart < first.lineEnd || (second.lineStart == first.lineEnd && second.columnStart < first.lineEnd)) {
+            //first and second overlap
+            if (first.lineStart != second.lineStart && first.columnStart != second.lineStart) {
+                result += Region(
+                    first.lineStart,
+                    first.columnStart,
+                    second.lineStart,
+                    second.columnStart,
+                    first.executionCount,
+                    first.fileId,
+                    first.expandedFileId,
+                    first.regionKind
+                )
+            }
+            if (first.lineEnd > second.lineEnd || (first.lineEnd == second.lineEnd && first.columnEnd >= second.columnEnd)) {
+                //Second is fully inside of first
+                result += second
+                if (first.lineEnd != second.lineEnd || first.columnEnd != second.columnEnd) {
+                    result += Region(
+                        second.lineEnd,
+                        second.columnEnd,
+                        first.lineEnd,
+                        first.columnEnd,
+                        first.executionCount,
+                        first.fileId,
+                        first.expandedFileId,
+                        first.regionKind
+                    )
+                }
+            } else {
+                result += Region(
+                    second.lineStart,
+                    second.columnStart,
+                    first.lineEnd,
+                    first.columnEnd,
+                    first.executionCount,
+                    first.fileId,
+                    first.expandedFileId,
+                    first.regionKind
+                )
+                result += Region(
+                    first.lineEnd,
+                    first.columnEnd,
+                    second.lineEnd,
+                    second.columnEnd,
+                    first.executionCount,
+                    first.fileId,
+                    first.expandedFileId,
+                    first.regionKind
+                )
+            }
+        } else {
+            listOf(first, second)
+        }
+
+        return result
     }
 
     private fun findStatementsForBranches(
