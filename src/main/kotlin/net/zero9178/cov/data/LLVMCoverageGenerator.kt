@@ -8,6 +8,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
@@ -19,9 +20,7 @@ import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
-import com.jetbrains.cidr.lang.psi.OCIfStatement
-import com.jetbrains.cidr.lang.psi.OCLoopStatement
-import com.jetbrains.cidr.lang.psi.OCStatement
+import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
@@ -36,6 +35,10 @@ class LLVMCoverageGenerator(
     private val myLLVMProf: String,
     private val myDemangler: String?
 ) : CoverageGenerator {
+
+    companion object {
+        val log = Logger.getInstance(LLVMCoverageGenerator::class.java)
+    }
 
     override fun patchEnvironment(
         configuration: CMakeAppRunConfiguration,
@@ -59,8 +62,7 @@ class LLVMCoverageGenerator(
     private data class File(val filename: String, val segments: List<Segment>)
 
     private data class Segment(
-        val line: Int,
-        val column: Int,
+        val pos: ComparablePair<Int, Int>,
         val count: Long,
         val hasCount: Boolean,
         val isRegionEntry: Boolean
@@ -74,10 +76,8 @@ class LLVMCoverageGenerator(
     )
 
     private data class Region(
-        val lineStart: Int,
-        val columnStart: Int,
-        val lineEnd: Int,
-        val columnEnd: Int,
+        val start: ComparablePair<Int, Int>,
+        val end: ComparablePair<Int, Int>,
         val executionCount: Long, val fileId: Int, val expandedFileId: Int, val regionKind: Int
     ) {
         companion object {
@@ -94,16 +94,16 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         project: Project
     ): CoverageData {
+        val jsonStart = System.nanoTime()
         val root = Klaxon()
             .converter(object : Converter {
                 override fun canConvert(cls: Class<*>) = cls == Segment::class.java
 
-                @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
                 override fun fromJson(jv: JsonValue): Any? {
                     val array = jv.array ?: return null
                     return Segment(
-                        (array[0] as Number).toInt(),
-                        (array[1] as Number).toInt(),
+                        (array[0] as Number).toInt() toCP
+                                (array[1] as Number).toInt(),
                         (array[2] as Number).toLong(),
                         if (array[3] is Boolean) array[3] as Boolean else array[3] as Number != 0,
                         if (array[4] is Boolean) array[4] as Boolean else array[4] as Number != 0
@@ -112,7 +112,7 @@ class LLVMCoverageGenerator(
 
                 override fun toJson(value: Any): String {
                     val segment = value as? Segment ?: return ""
-                    return "[${segment.line},${segment.column},${segment.count},${segment.hasCount},${segment.isRegionEntry}]"
+                    return "[${segment.pos.first},${segment.pos.second},${segment.count},${segment.hasCount},${segment.isRegionEntry}]"
                 }
             }).converter(object : Converter {
                 override fun canConvert(cls: Class<*>) = cls == Region::class.java
@@ -120,10 +120,10 @@ class LLVMCoverageGenerator(
                 override fun fromJson(jv: JsonValue): Any? {
                     val array = jv.array ?: return null
                     return Region(
-                        (array[0] as Number).toInt(),
-                        (array[1] as Number).toInt(),
-                        (array[2] as Number).toInt(),
-                        (array[3] as Number).toInt(),
+                        (array[0] as Number).toInt() toCP
+                                (array[1] as Number).toInt(),
+                        (array[2] as Number).toInt() toCP
+                                (array[3] as Number).toInt(),
                         (array[4] as Number).toLong(),
                         (array[5] as Number).toInt(),
                         (array[6] as Number).toInt(),
@@ -133,13 +133,106 @@ class LLVMCoverageGenerator(
 
                 override fun toJson(value: Any): String {
                     val region = value as? Region ?: return ""
-                    return "[${region.lineStart},${region.columnStart},${region.lineEnd},${region.columnEnd},${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
+                    return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
+                            "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
                 }
             }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
             ?: return CoverageData(emptyMap())
+        log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
 
-        val mangledNames = root.data.map { data -> data.functions.map { it.name } }.flatten()
-        val demangledNames = if (myDemangler != null && Paths.get(environment.toLocalPath(myDemangler)).exists()) {
+        val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
+        val demangledNames = demangle(environment, mangledNames)
+
+        return CoverageData(root.data.flatMap { data ->
+            //Associates the filename with a list of all functions in that file
+            val funcMap =
+                data.functions.flatMap { func -> func.filenames.map { it to func } }.groupBy({ it.first }) {
+                    it.second
+                }
+
+            data.files.map { file ->
+                val entries = file.segments.filter { it.isRegionEntry }
+                val activeCount = Thread.activeCount()
+                CoverageFileData(
+                    environment.toLocalPath(file.filename).replace('\\', '/'),
+                    funcMap.getOrDefault(
+                        file.filename,
+                        emptyList()
+                    ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
+                        ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFunctionData>> {
+                            functions.fold(emptyList()) { result, function ->
+
+                                val regions =
+                                    function.regions.filter { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
+                                        .fold(
+                                            emptyList<Region>()
+                                        ) { regionResult, region ->
+                                            if (regionResult.isEmpty()) {
+                                                regionResult + region
+                                            } else {
+                                                //regionResult is always an ascending sorted list of regions that do not intersect.
+                                                //This means that both starting lines and columns as well as end lines and columns are sorted ascending
+                                                val afterIndex =
+                                                    regionResult.binarySearchBy(region.end) { it.end }.let {
+                                                        //If binary search does not succeed it returns the index where the
+                                                        //object should be inserted to remain order in the form of
+                                                        // -(index + 1)
+                                                        if (it < 0) {
+                                                            -it - 1
+                                                        } else {
+                                                            it
+                                                        }
+                                                    }
+
+                                                regionResult.slice(0 until afterIndex) + intersectRegions(
+                                                    regionResult[afterIndex],
+                                                    region
+                                                ) + regionResult.slice(afterIndex + 1..regionResult.lastIndex)
+                                            }
+                                        }
+
+                                if (regions.isEmpty()) {
+                                    result
+                                } else {
+                                    val branches =
+                                        regions.filter { region ->
+                                            entries.any {
+                                                it.pos == region.start
+                                            }
+                                        }
+
+                                    result + CoverageFunctionData(
+                                        regions.first().start.first,
+                                        regions.first().end.first,
+                                        demangledNames[function.name] ?: function.name,
+                                        FunctionRegionData(regions.map { region ->
+                                            FunctionRegionData.Region(
+                                                region.start,
+                                                region.end,
+                                                region.executionCount
+                                            )
+                                        }),
+                                        if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
+                                            regions.first().start.first to regions.last().end.first,
+                                            branches,
+                                            regions,
+                                            environment.toLocalPath(file.filename),
+                                            project
+                                        ) else emptyList()
+                                    )
+                                }
+                            }
+                        }
+                    }.flatMap { it.get() }.associateBy { it.functionName })
+            }
+        }.associateBy { it.filePath })
+    }
+
+    private fun demangle(
+        environment: CPPEnvironment,
+        mangledNames: List<String>
+    ): Map<String, String> {
+        return if (myDemangler != null && Paths.get(environment.toLocalPath(myDemangler)).exists()) {
             val p = ProcessBuilder().command(
                 (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
                     environment.toolchain.toolSetPath,
@@ -168,110 +261,33 @@ class LLVMCoverageGenerator(
         } else {
             mangledNames.associateBy { it }
         }
-
-        return CoverageData(root.data.map { data ->
-            //Associates the filename with a list of all functions in that file
-            val funcMap =
-                data.functions.map { func -> func.filenames.map { it to func } }.flatten().groupBy({ it.first }) {
-                    it.second
-                }
-
-            data.files.map { file ->
-                val entries = file.segments.filter { it.isRegionEntry }
-                val activeCount = 1//Thread.activeCount()
-                CoverageFileData(
-                    environment.toLocalPath(file.filename).replace('\\', '/'),
-                    funcMap.getOrDefault(
-                        file.filename,
-                        emptyList()
-                    ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                        ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFunctionData>> {
-                            functions.fold(emptyList()) { result, function ->
-
-                                val filter =
-                                    function.regions.filter { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
-                                val regions =
-                                    filter
-                                        .fold(
-                                            emptyList<Region>()
-                                        ) { regionResult, region ->
-                                            val after =
-                                                regionResult.indexOfFirst { it.lineEnd > region.lineEnd || (it.lineEnd == region.lineEnd && it.columnEnd >= region.columnEnd) }
-                                            if (after >= 0) {
-                                                val afterRegion = regionResult[after]
-                                                regionResult.slice(0 until after) + intersectRegions(
-                                                    afterRegion,
-                                                    region
-                                                ) + regionResult.slice(after + 1..regionResult.lastIndex)
-                                            } else regionResult + region
-                                        }
-                                if (regions.isEmpty()) {
-                                    result
-                                } else {
-                                    val branches =
-                                        regions.filter { region -> entries.any { it.line == region.lineStart && it.column == region.columnStart } }
-                                    result + CoverageFunctionData(
-                                        regions.first().lineStart,
-                                        regions.first().lineEnd,
-                                        demangledNames[function.name] ?: function.name,
-                                        FunctionRegionData(regions.map { region ->
-                                            FunctionRegionData.Region(
-                                                region.lineStart toCP region.columnStart,
-                                                region.lineEnd toCP region.columnEnd,
-                                                region.executionCount
-                                            )
-                                        }),
-                                        if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
-                                            regions.first().lineStart to regions.first().lineEnd,
-                                            branches,
-                                            regions,
-                                            environment.toLocalPath(file.filename),
-                                            project
-                                        ) else emptyList()
-                                    )
-                                }
-                            }
-                        }
-                    }.map { it.get() }.flatten().associateBy { it.functionName })
-            }
-
-
-        }.flatten().associateBy { it.filePath })
     }
 
     private fun intersectRegions(regionOne: Region, regionTwo: Region): List<Region> {
         val result = mutableListOf<Region>()
 
-        val first =
-            if (regionOne.lineStart < regionTwo.lineStart
-                || (regionOne.lineStart == regionTwo.lineStart && regionOne.columnStart < regionTwo.columnStart)
-            )
-                regionOne else regionTwo
+        val first = if (regionOne.start < regionTwo.start) regionOne else regionTwo
         val second = if (first === regionOne) regionTwo else regionOne
 
-        if (second.lineStart < first.lineEnd || (second.lineStart == first.lineEnd && second.columnStart < first.lineEnd)) {
+        if (second.start < first.end) {
             //first and second overlap
-            if (first.lineStart != second.lineStart && first.columnStart != second.lineStart) {
+            if (first.start != second.start) {
                 result += Region(
-                    first.lineStart,
-                    first.columnStart,
-                    second.lineStart,
-                    second.columnStart,
+                    first.start,
+                    second.start,
                     first.executionCount,
                     first.fileId,
                     first.expandedFileId,
                     first.regionKind
                 )
             }
-            if (first.lineEnd > second.lineEnd || (first.lineEnd == second.lineEnd && first.columnEnd >= second.columnEnd)) {
+            if (first.end > second.end) {
                 //Second is fully inside of first
                 result += second
-                if (first.lineEnd != second.lineEnd || first.columnEnd != second.columnEnd) {
+                if (first.end != second.end) {
                     result += Region(
-                        second.lineEnd,
-                        second.columnEnd,
-                        first.lineEnd,
-                        first.columnEnd,
+                        second.end,
+                        first.end,
                         first.executionCount,
                         first.fileId,
                         first.expandedFileId,
@@ -280,20 +296,16 @@ class LLVMCoverageGenerator(
                 }
             } else {
                 result += Region(
-                    second.lineStart,
-                    second.columnStart,
-                    first.lineEnd,
-                    first.columnEnd,
+                    second.start,
+                    first.end,
                     first.executionCount,
                     first.fileId,
                     first.expandedFileId,
                     first.regionKind
                 )
                 result += Region(
-                    first.lineEnd,
-                    first.columnEnd,
-                    second.lineEnd,
-                    second.columnEnd,
+                    first.end,
+                    second.end,
                     first.executionCount,
                     first.fileId,
                     first.expandedFileId,
@@ -301,7 +313,7 @@ class LLVMCoverageGenerator(
                 )
             }
         } else {
-            listOf(first, second)
+            result += listOf(first, second)
         }
 
         return result
@@ -324,7 +336,7 @@ class LLVMCoverageGenerator(
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
 
-            val branches = mutableListOf<Pair<Region, OCStatement>>()
+            val branches = mutableListOf<Pair<Region, OCElement>>()
 
             object : OCRecursiveVisitor(
                 TextRange(
@@ -352,9 +364,16 @@ class LLVMCoverageGenerator(
                     super.visitIfStatement(stmt)
                 }
 
+                override fun visitConditionalExpression(expression: OCConditionalExpression?) {
+                    expression ?: return super.visitConditionalExpression(expression)
+                    val con = expression.condition
+                    val pos = expression.getPositiveExpression(false)
+                    val neg = expression.negativeExpression
+                }
+
                 private fun matchStatement(parent: OCStatement, body: OCStatement) {
                     branches += regionEntries.filter {
-                        body.textOffset == document.getLineStartOffset(it.lineStart - 1) + it.columnStart - 1
+                        body.textOffset == document.getLineStartOffset(it.start.first - 1) + it.start.second - 1
                     }.map { it to parent }
                 }
             }.visitElement(psiFile)
@@ -364,15 +383,35 @@ class LLVMCoverageGenerator(
                 val (above, after) = {
                     val startLine = document.getLineNumber(element.textOffset) + 1
                     val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-                    val startPos = ComparablePair(startLine, startColumn)
+                    val startPos = startLine toCP startColumn
 
                     val endLine = document.getLineNumber(element.textRange.endOffset) + 1
                     val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
-                    val endPos = endLine toCP endColumn + 1
+                    val endPos = endLine toCP endColumn
 
-                    allRegions.findLast {
-                        startPos in (it.lineStart toCP it.columnStart)..(it.lineEnd toCP it.columnEnd)
-                    } to allRegions.findLast { endPos in (it.lineStart toCP it.columnStart)..(it.lineEnd toCP it.columnEnd) }
+                    val aboveIndex = allRegions.binarySearch {
+                        when {
+                            startPos < it.start -> 1
+                            startPos > it.end -> -1
+                            else -> 0
+                        }
+                    }
+                    val afterIndex =
+                        allRegions.binarySearch {
+                            when {
+                                endPos < it.start -> 1
+                                endPos > it.end -> -1
+                                else -> 0
+                            }
+                        }
+                    val aboveItem = allRegions.getOrNull(aboveIndex)
+                    val afterItem = allRegions.getOrNull(afterIndex)
+                    (if (aboveItem == null || startPos !in aboveItem.start..aboveItem.end)
+                        null
+                    else allRegions[aboveIndex]) to
+                            (if (afterItem == null || endPos !in afterItem.start..afterItem.end)
+                                null
+                            else allRegions[afterIndex])
                 }()
 
                 if (above == null) {

@@ -126,7 +126,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
 
         val result = lines.chunked(ceil(lines.size.toDouble() / Thread.activeCount()).toInt()).map {
             ApplicationManager.getApplication().executeOnPooledThread<List<Item>> {
-                it.map { gcovFile ->
+                it.flatMap { gcovFile ->
                     try {
                         val ast = if (myMajorVersion == 8) {
                             gcov8Grammer.parseToEnd(gcovFile.joinToString("\n"))
@@ -144,9 +144,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                         Notifications.Bus.notify(notification, project)
                         emptyList<Item>()
                     }
-                }.flatten()
+                }
             }
-        }.map { it.get() }.flatten()
+        }.flatMap { it.get() }
         return linesToCoverageData(result)
     }
 

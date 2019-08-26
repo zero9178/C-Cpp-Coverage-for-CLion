@@ -126,7 +126,7 @@ class CoverageHighlighter(private val myProject: Project) {
             return
         }
         for ((name, file) in coverageData.files) {
-            myHighlighting[name] = HighLightInfo(file.functions.values.map { functionData ->
+            myHighlighting[name] = HighLightInfo(file.functions.values.flatMap { functionData ->
                 when (functionData.coverage) {
                     is FunctionLineData -> functionData.coverage.data.map {
                         Triple(
@@ -143,7 +143,7 @@ class CoverageHighlighter(private val myProject: Project) {
                         )
                     }
                 }
-            }.flatten(), file.functions.values.map { functionData ->
+            }, file.functions.values.flatMap { functionData ->
                 functionData.branches.map {
                     Triple(
                         LogicalPosition(it.startPos.first - 1, it.startPos.second - 1),
@@ -151,7 +151,7 @@ class CoverageHighlighter(private val myProject: Project) {
                         it.skippedCount != 0
                     )
                 }
-            }.flatten().distinctBy { it.first })
+            }.distinctBy { it.first })
         }
         ApplicationManager.getApplication().invokeLater {
             EditorFactory.getInstance().allEditors.forEach {

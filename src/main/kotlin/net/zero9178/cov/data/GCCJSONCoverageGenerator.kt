@@ -47,7 +47,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             val document =
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
-            lines.filter { it.branches.isNotEmpty() }.map { line ->
+            lines.filter { it.branches.isNotEmpty() }.flatMap { line ->
                 val startOffset = document.getLineStartOffset(line.lineNumber - 1)
                 val lineEndOffset = document.getLineEndOffset(line.lineNumber - 1)
                 val result = mutableListOf<OCElement>()
@@ -320,7 +320,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         }, steppedIn.count, skipped.count
                     )
                 }
-            }.flatten()
+            }
         }
     }
 
@@ -347,7 +347,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     }.associateBy { it.functionName })
                 }
             }
-        }.map { it.get() }.flatten().associateBy { it.filePath })
+        }.flatMap { it.get() }.associateBy { it.filePath })
 
     private data class Root(
         @Json(name = "current_working_directory") val currentWorkingDirectory: String,
@@ -384,9 +384,9 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             ApplicationManager.getApplication().executeOnPooledThread<List<File>> {
                 Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)?.files
             }
-        }.map {
+        }.flatMap {
             it.get()
-        }.flatten()
+        }
 
         return rooToCoverageData(Root("", "", "", root), env, project)
     }
