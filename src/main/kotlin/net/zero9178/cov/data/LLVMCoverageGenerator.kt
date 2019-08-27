@@ -20,7 +20,10 @@ import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
-import com.jetbrains.cidr.lang.psi.*
+import com.jetbrains.cidr.lang.psi.OCConditionalExpression
+import com.jetbrains.cidr.lang.psi.OCElement
+import com.jetbrains.cidr.lang.psi.OCIfStatement
+import com.jetbrains.cidr.lang.psi.OCLoopStatement
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
@@ -88,7 +91,6 @@ class LLVMCoverageGenerator(
         }
     }
 
-    @Suppress("ConvertCallChainIntoSequence")
     private fun processJson(
         jsonContent: String,
         environment: CPPEnvironment,
@@ -151,7 +153,6 @@ class LLVMCoverageGenerator(
                 }
 
             data.files.map { file ->
-                val entries = file.segments.filter { it.isRegionEntry }
                 val activeCount = Thread.activeCount()
                 CoverageFileData(
                     environment.toLocalPath(file.filename).replace('\\', '/'),
@@ -160,47 +161,46 @@ class LLVMCoverageGenerator(
                         emptyList()
                     ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
                         ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFunctionData>> {
+                            val segments = file.segments.toMutableList()
                             functions.fold(emptyList()) { result, function ->
 
-                                val regions =
-                                    function.regions.filter { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
-                                        .fold(
-                                            emptyList<Region>()
-                                        ) { regionResult, region ->
-                                            if (regionResult.isEmpty()) {
-                                                regionResult + region
-                                            } else {
-                                                //regionResult is always an ascending sorted list of regions that do not intersect.
-                                                //This means that both starting lines and columns as well as end lines and columns are sorted ascending
-                                                val afterIndex =
-                                                    regionResult.binarySearchBy(region.end) { it.end }.let {
-                                                        //If binary search does not succeed it returns the index where the
-                                                        //object should be inserted to remain order in the form of
-                                                        // -(index + 1)
-                                                        if (it < 0) {
-                                                            -it - 1
-                                                        } else {
-                                                            it
-                                                        }
-                                                    }
+                                val filter =
+                                    function.regions.firstOrNull { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
+                                        ?: return@fold result
+                                val funcStart = segments.binarySearchBy(filter.start) {
+                                    it.pos
+                                }
+                                val gapsPos =
+                                    function.regions.filter { it.regionKind == Region.GAP && function.filenames[it.fileId] == file.filename }
+                                        .associateBy { it.start }
+                                val branches = mutableListOf<Region>()
+                                val funcEnd = segments.binarySearchBy(
+                                    filter.end,
+                                    funcStart
+                                ) {
+                                    it.pos
+                                }
 
-                                                regionResult.slice(0 until afterIndex) + intersectRegions(
-                                                    regionResult[afterIndex],
-                                                    region
-                                                ) + regionResult.slice(afterIndex + 1..regionResult.lastIndex)
-                                            }
+                                val regions =
+                                    segments.slice(
+                                        funcStart..funcEnd
+                                    ).windowed(2) { (first, second) ->
+                                        val new = Region(first.pos, second.pos, first.count, 0, 0, Region.CODE)
+                                        if (first.isRegionEntry) {
+                                            branches += new
                                         }
+                                        new
+                                    }.map {
+                                        gapsPos[it.start] ?: it
+                                    }
+
+                                if (funcEnd > funcStart && segments.size <= funcEnd + 1) {
+                                    segments.subList(funcStart, funcEnd + 1).clear()
+                                }
 
                                 if (regions.isEmpty()) {
                                     result
                                 } else {
-                                    val branches =
-                                        regions.filter { region ->
-                                            entries.any {
-                                                it.pos == region.start
-                                            }
-                                        }
-
                                     result + CoverageFunctionData(
                                         regions.first().start.first,
                                         regions.first().end.first,
@@ -261,62 +261,6 @@ class LLVMCoverageGenerator(
         } else {
             mangledNames.associateBy { it }
         }
-    }
-
-    private fun intersectRegions(regionOne: Region, regionTwo: Region): List<Region> {
-        val result = mutableListOf<Region>()
-
-        val first = if (regionOne.start < regionTwo.start) regionOne else regionTwo
-        val second = if (first === regionOne) regionTwo else regionOne
-
-        if (second.start < first.end) {
-            //first and second overlap
-            if (first.start != second.start) {
-                result += Region(
-                    first.start,
-                    second.start,
-                    first.executionCount,
-                    first.fileId,
-                    first.expandedFileId,
-                    first.regionKind
-                )
-            }
-            if (first.end > second.end) {
-                //Second is fully inside of first
-                result += second
-                if (first.end != second.end) {
-                    result += Region(
-                        second.end,
-                        first.end,
-                        first.executionCount,
-                        first.fileId,
-                        first.expandedFileId,
-                        first.regionKind
-                    )
-                }
-            } else {
-                result += Region(
-                    second.start,
-                    first.end,
-                    first.executionCount,
-                    first.fileId,
-                    first.expandedFileId,
-                    first.regionKind
-                )
-                result += Region(
-                    first.end,
-                    second.end,
-                    first.executionCount,
-                    first.fileId,
-                    first.expandedFileId,
-                    first.regionKind
-                )
-            }
-        } else {
-            result += listOf(first, second)
-        }
-
-        return result
     }
 
     private fun findStatementsForBranches(
