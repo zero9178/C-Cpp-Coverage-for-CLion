@@ -350,7 +350,7 @@ class LLVMCoverageGenerator(
                         return super.visitLoopStatement(loop)
                     }
                     val body = loop.body ?: return super.visitLoopStatement(loop)
-                    matchStatement(loop, body)
+                    match(loop, body)
                     super.visitLoopStatement(loop)
                 }
 
@@ -360,21 +360,26 @@ class LLVMCoverageGenerator(
                         return super.visitIfStatement(stmt)
                     }
                     val body = stmt.thenBranch ?: return super.visitIfStatement(stmt)
-                    matchStatement(stmt, body)
+                    match(stmt, body)
                     super.visitIfStatement(stmt)
                 }
 
                 override fun visitConditionalExpression(expression: OCConditionalExpression?) {
                     expression ?: return super.visitConditionalExpression(expression)
                     val con = expression.condition
-                    val pos = expression.getPositiveExpression(false)
-                    val neg = expression.negativeExpression
+                    val pos =
+                        expression.getPositiveExpression(false) ?: return super.visitConditionalExpression(expression)
+                    match(con, pos)
                 }
 
-                private fun matchStatement(parent: OCStatement, body: OCStatement) {
-                    branches += regionEntries.filter {
-                        body.textOffset == document.getLineStartOffset(it.start.first - 1) + it.start.second - 1
-                    }.map { it to parent }
+                private fun match(parent: OCElement, body: OCElement) {
+                    val regionIndex = regionEntries.binarySearchBy(body.textOffset) {
+                        document.getLineStartOffset(it.start.first - 1) + it.start.second - 1
+                    }
+                    if (regionIndex < 0) {
+                        return
+                    }
+                    branches += regionEntries[regionIndex] to parent
                 }
             }.visitElement(psiFile)
 
