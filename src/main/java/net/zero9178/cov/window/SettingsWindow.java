@@ -27,6 +27,7 @@ public abstract class SettingsWindow implements Configurable {
     private JBLabel myLoading;
     protected JCheckBox myUseRunner;
     protected JCheckBox myDoBranchCoverage;
+    protected JBCheckBox myCondBranchCoverage;
 
     protected void setLoading(boolean loading) {
         myLoading.setIcon(loading ? new AnimatedIcon.Default() : null);

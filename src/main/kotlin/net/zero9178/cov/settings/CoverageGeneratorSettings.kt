@@ -32,6 +32,7 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
         var paths: MutableMap<String, GeneratorInfo> = mutableMapOf(),
         var ifBranchCoverageEnabled: Boolean = true,
         var loopBranchCoverageEnabled: Boolean = true,
+        var conditionalExpBranchCoverageEnabled: Boolean = true,
         var booleanOpBranchCoverageEnabled: Boolean = false,
         var branchCoverageEnabled: Boolean = true,
         var useCoverageAction: Boolean = false
@@ -67,6 +68,12 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
         get() = myState.booleanOpBranchCoverageEnabled
         set(value) {
             myState.booleanOpBranchCoverageEnabled = value
+        }
+
+    var conditionalExpCoverageEnabled: Boolean
+        get() = myState.conditionalExpBranchCoverageEnabled
+        set(value) {
+            myState.conditionalExpBranchCoverageEnabled = value
         }
 
     var branchCoverageEnabled: Boolean

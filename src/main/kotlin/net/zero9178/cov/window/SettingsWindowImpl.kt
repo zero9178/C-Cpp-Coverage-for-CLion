@@ -164,6 +164,7 @@ class SettingsWindowImpl : SettingsWindow() {
 
         myIfBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
         myLoopBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
+        myCondBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
         myBooleanOpBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
         myUseRunner.isSelected = CoverageGeneratorSettings.getInstance().useCoverageAction
         myDoBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().branchCoverageEnabled
@@ -242,6 +243,7 @@ class SettingsWindowImpl : SettingsWindow() {
     override fun isModified() =
         CoverageGeneratorSettings.getInstance().paths != myTempToolchainState || myIfBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
                 || myLoopBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
+                || myCondBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
                 || myBooleanOpBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
                 || myDoBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().branchCoverageEnabled
                 || myUseRunner.isSelected != CoverageGeneratorSettings.getInstance().useCoverageAction
@@ -253,6 +255,7 @@ class SettingsWindowImpl : SettingsWindow() {
             myTempToolchainState.mapValues { it.value.copy() }.toMutableMap()
         CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled = myIfBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled = myLoopBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled = myCondBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled = myBooleanOpBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().useCoverageAction = myUseRunner.isSelected
         CoverageGeneratorSettings.getInstance().branchCoverageEnabled = myDoBranchCoverage.isSelected

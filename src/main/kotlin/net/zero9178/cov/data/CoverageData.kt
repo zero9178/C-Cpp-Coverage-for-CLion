@@ -17,8 +17,13 @@ class FunctionRegionData(override val data: List<Region>) : FunctionCoverageData
     data class Region(
         val startPos: ComparablePair<Int, Int>,
         val endPos: ComparablePair<Int, Int>,
-        val executionCount: Long
-    )
+        val executionCount: Long,
+        val kind: Kind
+    ) {
+        enum class Kind {
+            Code, Gap, Skipped, Expanded
+        }
+    }
 }
 
 data class CoverageFunctionData(

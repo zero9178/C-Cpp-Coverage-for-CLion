@@ -14,23 +14,20 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
-import com.intellij.util.io.exists
+import com.intellij.psi.tree.IElementType
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
-import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
-import com.jetbrains.cidr.lang.psi.OCConditionalExpression
-import com.jetbrains.cidr.lang.psi.OCElement
-import com.jetbrains.cidr.lang.psi.OCIfStatement
-import com.jetbrains.cidr.lang.psi.OCLoopStatement
+import com.jetbrains.cidr.lang.parser.OCTokenTypes
+import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
-import java.nio.file.Paths
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
@@ -172,7 +169,7 @@ class LLVMCoverageGenerator(
                                 }
                                 val gapsPos =
                                     function.regions.filter { it.regionKind == Region.GAP && function.filenames[it.fileId] == file.filename }
-                                        .associateBy { it.start }
+                                        .map { it.start }.toHashSet()
                                 val branches = mutableListOf<Region>()
                                 val funcEnd = segments.binarySearchBy(
                                     filter.end,
@@ -181,17 +178,35 @@ class LLVMCoverageGenerator(
                                     it.pos
                                 }
 
+                                val window = segments.slice(
+                                    funcStart..funcEnd
+                                ).windowed(2) { (first, second) ->
+                                    val new = Region(first.pos, second.pos, first.count, 0, 0, Region.CODE)
+                                    if (first.isRegionEntry) {
+                                        branches += new
+                                    }
+                                    new
+                                }
                                 val regions =
-                                    segments.slice(
-                                        funcStart..funcEnd
-                                    ).windowed(2) { (first, second) ->
-                                        val new = Region(first.pos, second.pos, first.count, 0, 0, Region.CODE)
-                                        if (first.isRegionEntry) {
-                                            branches += new
+                                    window.mapIndexed { index, region ->
+                                        if (!gapsPos.contains(region.start)) {
+                                            region
+                                        } else {
+                                            //I could leave out the gaps but this makes it look kinda ugly and harder to
+                                            //look at IMO. Might introduce a setting later on for those that want Gaps
+                                            //to be, well, gaps but for now am just gonna keep it like that making it
+                                            //look identical to when I used to work with regions
+                                            val count =
+                                                (if (index == 0) 0L else window[index - 1].executionCount) + if (index + 1 > window.lastIndex) 0L else window[index + 1].executionCount
+                                            Region(
+                                                region.start,
+                                                region.end,
+                                                count,
+                                                region.fileId,
+                                                region.expandedFileId,
+                                                Region.GAP
+                                            )
                                         }
-                                        new
-                                    }.map {
-                                        gapsPos[it.start] ?: it
                                     }
 
                                 if (funcEnd > funcStart && segments.size <= funcEnd + 1) {
@@ -209,7 +224,13 @@ class LLVMCoverageGenerator(
                                             FunctionRegionData.Region(
                                                 region.start,
                                                 region.end,
-                                                region.executionCount
+                                                region.executionCount,
+                                                when (region.regionKind) {
+                                                    Region.GAP -> FunctionRegionData.Region.Kind.Gap
+                                                    Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                                                    Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                                                    else -> FunctionRegionData.Region.Kind.Code
+                                                }
                                             )
                                         }),
                                         if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
@@ -232,16 +253,16 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         mangledNames: List<String>
     ): Map<String, String> {
-        return if (myDemangler != null && Paths.get(environment.toLocalPath(myDemangler)).exists()) {
-            val p = ProcessBuilder().command(
-                (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
-                    environment.toolchain.toolSetPath,
-                    "run"
-                ) else emptyList()) + listOf(myDemangler)
-            ).redirectErrorStream(true).start()
+        return if (myDemangler != null) {
+            val p = environment.hostMachine.createProcess(
+                GeneralCommandLine(myDemangler).withRedirectErrorStream(true),
+                false,
+                false
+            )
+
             var result = listOf<String>()
-            p.outputStream.bufferedWriter().use { writer ->
-                p.inputStream.bufferedReader().use { reader ->
+            p.process.outputStream.bufferedWriter().use { writer ->
+                p.process.inputStream.bufferedReader().use { reader ->
                     result = mangledNames.map { mangled ->
                         writer.appendln(
                             if (mangled.startsWith('_')) mangled else mangled.substring(
@@ -256,7 +277,7 @@ class LLVMCoverageGenerator(
                     }
                 }
             }
-            p.destroyForcibly()
+            p.destroyProcess()
             mangledNames.zip(result).associate { it }
         } else {
             mangledNames.associateBy { it }
@@ -310,10 +331,29 @@ class LLVMCoverageGenerator(
 
                 override fun visitConditionalExpression(expression: OCConditionalExpression?) {
                     expression ?: return super.visitConditionalExpression(expression)
+                    if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled) {
+                        return super.visitConditionalExpression(expression)
+                    }
                     val con = expression.condition
                     val pos =
                         expression.getPositiveExpression(false) ?: return super.visitConditionalExpression(expression)
                     match(con, pos)
+                    super.visitConditionalExpression(expression)
+                }
+
+                override fun visitBinaryExpression(expression: OCBinaryExpression?) {
+                    expression ?: return super.visitBinaryExpression(expression)
+                    if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled) {
+                        return super.visitBinaryExpression(expression)
+                    }
+                    when (expression.operationSignNode.text) {
+                        "||", "or", "&&", "and" -> {
+                            val left = expression.left ?: return
+                            val right = expression.right ?: return
+                            match(left, right)
+                        }
+                    }
+                    super.visitBinaryExpression(expression)
                 }
 
                 private fun match(parent: OCElement, body: OCElement) {
@@ -334,10 +374,6 @@ class LLVMCoverageGenerator(
                     val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
                     val startPos = startLine toCP startColumn
 
-                    val endLine = document.getLineNumber(element.textRange.endOffset) + 1
-                    val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
-                    val endPos = endLine toCP endColumn
-
                     val aboveIndex = allRegions.binarySearch {
                         when {
                             startPos < it.start -> 1
@@ -345,27 +381,48 @@ class LLVMCoverageGenerator(
                             else -> 0
                         }
                     }
-                    val afterIndex =
-                        allRegions.binarySearch {
-                            when {
-                                endPos < it.start -> 1
-                                endPos > it.end -> -1
-                                else -> 0
-                            }
-                        }
                     val aboveItem = allRegions.getOrNull(aboveIndex)
-                    val afterItem = allRegions.getOrNull(afterIndex)
                     (if (aboveItem == null || startPos !in aboveItem.start..aboveItem.end)
                         null
                     else allRegions[aboveIndex]) to
-                            (if (afterItem == null || endPos !in afterItem.start..afterItem.end)
-                                null
-                            else allRegions[afterIndex])
+                            {
+                                //As after is only needed for loops we implement it with lazy calculation
+                                val endLine = document.getLineNumber(element.textRange.endOffset) + 1
+                                val endColumn =
+                                    element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
+                                val endPos = endLine toCP endColumn
+                                val afterIndex =
+                                    allRegions.binarySearch {
+                                        when {
+                                            endPos < it.start -> 1
+                                            endPos > it.end -> -1
+                                            else -> 0
+                                        }
+                                    }
+                                val afterItem = allRegions.getOrNull(afterIndex)
+                                (if (afterItem == null || endPos !in afterItem.start..afterItem.end)
+                                    null
+                                else allRegions[afterIndex])
+                            }
                 }()
 
                 if (above == null) {
                     list
                 } else {
+
+                    fun findSiblingForward(
+                        element: PsiElement,
+                        vararg elementTypes: IElementType
+                    ): PsiElement? {
+                        var e: PsiElement? = element.nextSibling
+                        while (e != null) {
+                            if (elementTypes.contains(e.node.elementType)) {
+                                return e
+                            }
+                            e = e.nextSibling
+                        }
+                        return null
+                    }
 
                     val startLine = when (element) {
                         is OCLoopStatement -> document.getLineNumber(
@@ -373,6 +430,14 @@ class LLVMCoverageGenerator(
                         ) + 1
                         is OCIfStatement -> document.getLineNumber(
                             element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
+                        ) + 1
+                        is OCExpression -> document.getLineNumber(
+                            findSiblingForward(
+                                element,
+                                OCTokenTypes.ANDAND,
+                                OCTokenTypes.OROR,
+                                OCTokenTypes.QUEST
+                            )?.textRange?.endOffset ?: element.lastChild.textRange.endOffset
                         ) + 1
                         else -> document.getLineNumber(element.firstChild.textRange.endOffset) + 1
                     }
@@ -382,13 +447,20 @@ class LLVMCoverageGenerator(
                             ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
                         is OCIfStatement -> (element.lParenth?.textRange?.startOffset
                             ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
+                        is OCExpression -> (findSiblingForward(
+                            element,
+                            OCTokenTypes.ANDAND,
+                            OCTokenTypes.OROR,
+                            OCTokenTypes.QUEST
+                        )?.textRange?.endOffset
+                            ?: element.lastChild.textRange.endOffset) - document.getLineStartOffset(startLine - 1) + 1
                         else -> element.firstChild.textRange.startOffset - document.getLineStartOffset(startLine - 1) + 1
                     }
 
                     list + CoverageBranchData(
                         startLine toCP startColumn, region.executionCount.toInt(),
-                        (if (above.executionCount >= region.executionCount) above.executionCount - region.executionCount else after?.executionCount
-                            ?: 1).toInt()
+                        (if (above.executionCount >= region.executionCount) above.executionCount - region.executionCount
+                        else after()?.executionCount ?: 1).toInt()
                     )
                 }
             }
@@ -407,19 +479,18 @@ class LLVMCoverageGenerator(
         val files = config.configurationGenerationDir.listFiles()
             ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
 
-        val llvmProf = ProcessBuilder().command(
-            (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
-                environment.toolchain.toolSetPath,
-                "run"
-            ) else emptyList())
-                    + listOf(
+        val p = environment.hostMachine.createProcess(
+            GeneralCommandLine(listOf(
                 myLLVMProf,
                 "merge",
                 "-output=${config.target.name}.profdata"
-            ) + files.map { environment.toEnvPath(it.absolutePath) }
-        ).directory(config.configurationGenerationDir).start()
-        var retCode = llvmProf.waitFor()
-        var lines = llvmProf.errorStream.bufferedReader().readLines()
+            ) + files.map { environment.toEnvPath(it.absolutePath) })
+                .withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
+            false,
+            false
+        )
+        var retCode = p.process.waitFor()
+        var lines = p.process.errorStream.bufferedReader().readLines()
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
                 "llvm-profdata returned error code $retCode with error output:\n${lines.joinToString(
@@ -432,27 +503,24 @@ class LLVMCoverageGenerator(
 
         files.forEach { it.delete() }
 
-        val processBuilder = ProcessBuilder().command(
-            (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
-                environment.toolchain.toolSetPath,
-                "run"
-            ) else emptyList()) +
-                    listOf(
-                        myLLVMCov,
-                        "export",
-                        "-instr-profile",
-                        "${config.target.name}.profdata",
-                        environment.toEnvPath(config.productFile?.absolutePath ?: "")
-                    )
-        ).directory(config.configurationGenerationDir).redirectErrorStream(true)
-        val llvmCov = processBuilder.start()
-        lines = llvmCov.inputStream.bufferedReader().readLines()
-        retCode = llvmCov.waitFor()
+        val llvmCov = environment.hostMachine.createProcess(
+            GeneralCommandLine(
+                listOf(
+                    myLLVMCov,
+                    "export",
+                    "-instr-profile",
+                    "${config.target.name}.profdata",
+                    environment.toEnvPath(config.productFile?.absolutePath ?: "")
+                )
+            ).withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)), false, false
+        )
+        lines = llvmCov.process.inputStream.bufferedReader().readLines()
+        retCode = llvmCov.process.waitFor()
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
                 "llvm-cov returned error code $retCode",
                 "Invocation and error output:",
-                "Invocation: ${processBuilder.command().joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
+                "Invocation: ${llvmCov.commandLine}\n Stderr: ${lines.joinToString("\n")}",
                 NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)

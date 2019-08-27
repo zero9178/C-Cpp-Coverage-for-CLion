@@ -348,20 +348,7 @@ private fun getColumnInfo(): Array<ColumnInfo<*, *>> {
     val lineInfo = ProgressBarColumn("Line/Region coverage", {
         getMaxLineCoverage(it.userObject)
     }) {
-        fun fromFunctionData(it: CoverageFunctionData): Long {
-            return when (it.coverage) {
-                is FunctionLineData -> it.coverage.data.count { entry -> entry.value > 0 }.toLong()
-                is FunctionRegionData -> it.coverage.data.count { region -> region.executionCount > 0 }.toLong()
-            }
-        }
-
-        when (val userObject = it.userObject) {
-            is CoverageFunctionData -> fromFunctionData(userObject)
-            is CoverageFileData -> {
-                userObject.functions.values.map(::fromFunctionData).sum()
-            }
-            else -> 0
-        }
+        getCurrentLineCoverage(it.userObject)
     }
 
     return if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
@@ -375,7 +362,7 @@ private fun getCurrentLineCoverage(functionOrFileData: Any): Long {
     fun fromFunctionData(it: CoverageFunctionData): Long {
         return when (it.coverage) {
             is FunctionLineData -> it.coverage.data.count { entry -> entry.value > 0 }.toLong()
-            is FunctionRegionData -> it.coverage.data.count { region -> region.executionCount > 0 }.toLong()
+            is FunctionRegionData -> it.coverage.data.filter { region -> region.kind != FunctionRegionData.Region.Kind.Gap }.count { region -> region.executionCount > 0 }.toLong()
         }
     }
 
@@ -392,7 +379,7 @@ private fun getMaxLineCoverage(functionOrFileData: Any): Long {
     fun fromFunctionData(it: CoverageFunctionData): Long {
         return when (it.coverage) {
             is FunctionLineData -> it.coverage.data.size.toLong()
-            is FunctionRegionData -> it.coverage.data.size.toLong()
+            is FunctionRegionData -> it.coverage.data.count { region -> region.kind != FunctionRegionData.Region.Kind.Gap }.toLong()
         }
     }
 
