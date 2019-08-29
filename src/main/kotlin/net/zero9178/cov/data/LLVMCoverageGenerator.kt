@@ -187,15 +187,17 @@ class LLVMCoverageGenerator(
                                     }
                                     new
                                 }
+                                val nonGaps = mutableListOf<Region>()
                                 val regions =
                                     window.mapIndexed { index, region ->
                                         if (!gapsPos.contains(region.start)) {
+                                            nonGaps += region
                                             region
                                         } else {
                                             //I could leave out the gaps but this makes it look kinda ugly and harder to
                                             //look at IMO. Might introduce a setting later on for those that want Gaps
                                             //to be, well, gaps but for now am just gonna keep it like that making it
-                                            //look identical to when I used to work with regions
+                                            //look identical to when it used to work with regions
                                             val count =
                                                 (if (index == 0) 0L else window[index - 1].executionCount) + if (index + 1 > window.lastIndex) 0L else window[index + 1].executionCount
                                             Region(
@@ -236,7 +238,7 @@ class LLVMCoverageGenerator(
                                         if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
                                             regions.first().start.first to regions.last().end.first,
                                             branches,
-                                            regions,
+                                            nonGaps,
                                             environment.toLocalPath(file.filename),
                                             project
                                         ) else emptyList()
