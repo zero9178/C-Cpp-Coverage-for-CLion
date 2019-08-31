@@ -21,6 +21,7 @@ import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
+import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
@@ -51,7 +52,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                 val startOffset = document.getLineStartOffset(line.lineNumber - 1)
                 val lineEndOffset = document.getLineEndOffset(line.lineNumber - 1)
                 val result = mutableListOf<OCElement>()
-                val leftOutStmts = mutableListOf<OCStatement>()
+                val leftOutStmts = mutableListOf<OCElement>()
                 object : OCRecursiveVisitor(
                     TextRange(
                         startOffset,
@@ -70,11 +71,18 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         super.visitIfStatement(stmt)
                     }
 
+                    override fun visitConditionalExpression(expression: OCConditionalExpression?) {
+                        expression ?: return super.visitConditionalExpression(expression)
+                        matchBranch(expression)
+                        super.visitConditionalExpression(expression)
+                    }
+
                     private fun matchBranch(element: OCElement) {
-                        //If and if or loop statement has an operator that can short circuit inside its expression
-                        //then we dont have any branch coverage for those itself. We return here as we are handling
-                        //it in the BinaryExpression
-                        val isShortCicuit = { statement: OCStatement, condition: PsiElement ->
+                        //When an statement that'd usually have branch coverage contains an boolean expression as its condition
+                        //no branch coverage is generated for the coverage. Instead we put that statement into leftOutStmts
+                        //and later down below evaluate the branch coverage of the whole boolean expression to figure out
+                        //the branch coverage of the whole condition
+                        val isShortCicuit = { statement: OCElement, condition: PsiElement ->
                             val list = PsiTreeUtil.getChildrenOfTypeAsList(
                                 condition,
                                 OCBinaryExpression::class.java
@@ -93,6 +101,14 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                                     return
                                 }
                                 if (element.condition?.let { isShortCicuit(element, it) } == true) {
+                                    return
+                                }
+                            }
+                            is OCConditionalExpression -> {
+                                if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
+                                    return
+                                }
+                                if (isShortCicuit(element, element.condition)) {
                                     return
                                 }
                             }
@@ -149,19 +165,34 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         .map { it[0] to it[1] }
                         .zip(result)
 
-                fun OCStatement.getCondition() = when (this) {
+                fun OCElement.getCondition() = when (this) {
                     is OCIfStatement -> this.condition
                     is OCLoopStatement -> this.condition
+                    is OCConditionalExpression -> this.condition
                     else -> null
                 }
 
-                fun OCStatement.getLParenth() = when (this) {
-                    is OCIfStatement -> this.lParenth
-                    is OCLoopStatement -> this.lParenth
-                    else -> null
+                fun OCElement.getBranchMarkOffset(): Int? {
+                    return when (this) {
+                        is OCIfStatement -> this.lParenth?.startOffset
+                        is OCLoopStatement -> this.lParenth?.startOffset
+                        is OCConditionalExpression -> PsiTreeUtil.findSiblingForward(
+                            this.condition,
+                            OCTokenTypes.QUEST,
+                            null
+                        )?.node?.textRange?.endOffset
+                        is OCExpression -> {
+                            val parent = this.parent as? OCBinaryExpression ?: return null
+                            PsiTreeUtil.findSiblingForward(this, parent.operationSign, null)?.node?.textRange?.endOffset
+                        }
+                        else -> null
+                    }
                 }
 
                 /**
+                 * Here we evaluate the boolean expressions inside of a condition to figure out the branch coverage
+                 * of the condition
+                 *
                  * OR Test code:
                  * for(; E0 || ... || En;) {
                  *      ...
@@ -222,8 +253,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                  *  goto check;
                  *  end:
                  *
-                 *  To figure out the branch probability of a loop or if that has short circuiting
-                 *  we need to check how many times the else was NOT reached incase of OR or check how many times
+                 *  To figure out the branch probability of a condition that has boolean operators
+                 *  we need to check how many times the else was NOT reached in case of OR or check how many times
                  *  all branches reached the deepest body
                  */
                 val stmts = leftOutStmts.map { thisStmt ->
@@ -264,9 +295,10 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                             }
                         }
                 }.filter { it.second != null }.map { it.first to it.second!! }.map { (thisIf, pair) ->
-                    val startLine = document.getLineNumber(thisIf.getLParenth()?.startOffset ?: thisIf.textOffset) + 1
+                    val startLine =
+                        document.getLineNumber(thisIf.getBranchMarkOffset() ?: thisIf.textOffset) + 1
                     val startColumn =
-                        (thisIf.getLParenth()?.startOffset ?: thisIf.textOffset) - document.getLineStartOffset(
+                        (thisIf.getBranchMarkOffset() ?: thisIf.textOffset) - document.getLineStartOffset(
                             startLine - 1
                         ) + 1
                     CoverageBranchData(
@@ -275,49 +307,37 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     )
                 }
 
+                var lastOCElement: OCElement? = null
                 zip.filter {
                     when (it.second) {
                         is OCLoopStatement -> CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
                         is OCIfStatement -> CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
+                        is OCConditionalExpression -> CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
                         is OCExpression -> CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
                         else -> true
                     }
                 }.fold(stmts) { list, (branches, element) ->
+                    val parent = element.parent
+                    if (parent != null && lastOCElement?.parent === parent) {
+                        lastOCElement = element
+                        return@fold list
+                    }
+                    lastOCElement = element
                     val steppedIn = if (branches.first.fallthrough) branches.first else branches.second
                     val skipped = if (branches.first.fallthrough) branches.second else branches.first
                     list + CoverageBranchData(
-                        when (element) {
-                            is OCLoopStatement -> {
-                                val startLine = document.getLineNumber(
-                                    element.lParenth?.textRange?.startOffset ?: element.textOffset
+                        {
+                            val startLine =
+                                document.getLineNumber(
+                                    element.getBranchMarkOffset() ?: element.textOffset
                                 ) + 1
-                                val column = (element.lParenth?.textRange?.startOffset
-                                    ?: element.textOffset) - document.getLineStartOffset(startLine - 1) + 1
-                                startLine toCP column
-                            }
-                            is OCIfStatement -> {
-                                val startLine = document.getLineNumber(
-                                    element.lParenth?.textRange?.startOffset ?: element.textOffset
+                            val startColumn =
+                                (element.getBranchMarkOffset()
+                                    ?: element.textOffset) - document.getLineStartOffset(
+                                    startLine - 1
                                 ) + 1
-                                val column = (element.lParenth?.textRange?.startOffset
-                                    ?: element.textOffset) - document.getLineStartOffset(startLine - 1) + 1
-                                startLine toCP column
-                            }
-                            is OCExpression -> {
-                                val startLine =
-                                    document.getLineNumber(element.textOffset) + 1
-                                val column =
-                                    element.textOffset - document.getLineStartOffset(
-                                        startLine - 1
-                                    ) + 1
-                                startLine toCP column
-                            }
-                            else -> {
-                                val startLine = document.getLineNumber(element.textOffset) + 1
-                                val column = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-                                startLine toCP column
-                            }
-                        }, steppedIn.count, skipped.count
+                            startLine toCP startColumn
+                        }(), steppedIn.count, skipped.count
                     )
                 }
             }
