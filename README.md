@@ -119,13 +119,6 @@ indexing is in progress
 out for is that gcc, g++ and gcov installed by XCode are **NOT** GCC but actually clang,clang++ and a gcov like implementation 
 by the LLVM project. This version of gcov will **NOT WORK** as it does not implement the same command line arguments as 
 real gcov. Please install another toolchain or find a llvm-cov version suitable for your version of clang.
-* Currently branch coverage works on if statements and any loop statements. In the case of GCC 9 boolean operators also 
-count as branches but are by default not processed. You can enable it in the Settings. Boolean operators are currently 
-not counted as branches with Clang and will be be implemented in future versions
-* The conditional operator ( ? : ) is currently not counted as branches by either Clang or GCC and will be implemented 
-in future versions
-* Due to how the plugin renders region coverage in the editor, the coloured background behind the scroll wheel in the 
-editor is not accurate and will be fixed in future versions. 
 * Currently a new function is generated for each type in a template instantiations. if constexpr
 also has weird data and in general data in such functions may be less accurate. Future versions will 
 try to address this issue and possibly even parse the function name in order to collapse different instantiations of the 
