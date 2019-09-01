@@ -6,6 +6,7 @@ import com.beust.klaxon.Klaxon
 import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
+import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
@@ -20,7 +21,6 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
-import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
@@ -422,33 +422,26 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         val files =
             config.configurationGenerationDir.walkTopDown().filter {
                 it.isFile && it.name.endsWith(".gcda")
-            }.map { environment.toEnvPath(it.absolutePath) }.toList()
+            }.map { environment.toEnvPath(it.absolutePath) }.filterNotNull().toList()
 
-        val processBuilder =
-            ProcessBuilder().command(
-                (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
-                    environment.toolchain.toolSetPath,
-                    "run"
-                ) else emptyList()) +
-                        listOf(
-                            myGcov,
-                            "-i",
-                            "-m",
-                            "-t"
-                        ) + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
-                    listOf("-b")
-                } else {
-                    emptyList()
-                } + files
-            ).redirectErrorStream(true)
-        val p = processBuilder.start()
-        val lines = p.inputStream.bufferedReader().readLines()
-        val retCode = p.waitFor()
+        val command = listOf(
+            myGcov,
+            "-i",
+            "-m",
+            "-t"
+        ) + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+            listOf("-b")
+        } else {
+            emptyList()
+        } + files
+        val p = environment.hostMachine.runProcess(GeneralCommandLine(command).withRedirectErrorStream(true), null, -1)
+        val lines = p.stdoutLines
+        val retCode = p.exitCode
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
                 "gcov returned error code $retCode",
                 "Invocation and error output:",
-                "Invocation: ${processBuilder.command().joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
+                "Invocation: ${command.joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
                 NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)

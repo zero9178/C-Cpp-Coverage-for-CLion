@@ -5,6 +5,7 @@ import com.github.h0tk3y.betterParse.grammar.Grammar
 import com.github.h0tk3y.betterParse.grammar.parseToEnd
 import com.github.h0tk3y.betterParse.parser.ParseException
 import com.intellij.execution.ExecutionTarget
+import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
@@ -12,7 +13,6 @@ import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
-import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
 import net.zero9178.cov.notification.CoverageNotification
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -202,23 +202,26 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                 it.isFile && it.name.endsWith(".gcda")
             }.map { environment.toEnvPath(it.absolutePath) }.toList()
 
-        val processBuilder =
-            ProcessBuilder().command(
-                (if (environment.toolchain.toolSetKind == CPPToolSet.Kind.WSL) listOf(
-                    environment.toolchain.toolSetPath,
-                    "run"
-                ) else emptyList()) +
-                        listOf(myGcov, "-i", "-m") + files
-            ).redirectErrorStream(true)
-                .directory(config.configurationGenerationDir)
-        val p = processBuilder.start()
-        val lines = p.inputStream.bufferedReader().readLines()
-        val retCode = p.waitFor()
+        val p = environment.hostMachine.runProcess(
+            GeneralCommandLine(
+                listOf(
+                    myGcov,
+                    "-i",
+                    "-m"
+                ) + files
+            ).withRedirectErrorStream(true).withWorkDirectory(config.configurationGenerationDir), null, -1
+        )
+        val lines = p.stdout
+        val retCode = p.exitCode
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
                 "gcov returned error code $retCode",
                 "Invocation and error output:",
-                "Invocation: ${processBuilder.command().joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
+                "Invocation: ${(listOf(
+                    myGcov,
+                    "-i",
+                    "-m"
+                ) + files).joinToString(" ")}\n Stderr: ${lines}",
                 NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)
