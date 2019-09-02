@@ -72,15 +72,10 @@ class CoverageHighlighter(private val myProject: Project) {
                             targetRegion.height - 2 * margin
                         )
 
-                        g.drawImage(
-                            IconUtil.toImage(icon),
-                            targetRegion.x + margin,
-                            targetRegion.y + margin,
-                            targetRegion.height - 2 * margin,
-                            targetRegion.height - 2 * margin,
-                            textAttributes.backgroundColor,
-                            editor.component
-                        )
+                        g.color = textAttributes.backgroundColor
+                        g.fillRect(targetRegion.x, targetRegion.y, targetRegion.height, targetRegion.height)
+
+                        icon.paintIcon(editor.component, g, targetRegion.x + margin, targetRegion.y + margin)
                     }
 
                     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
