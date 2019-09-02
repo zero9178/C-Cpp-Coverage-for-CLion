@@ -73,7 +73,7 @@ class CoverageHighlighter(private val myProject: Project) {
                         )
 
                         g.color = textAttributes.backgroundColor
-                        g.fillRect(targetRegion.x, targetRegion.y, targetRegion.height, targetRegion.height)
+                        g.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
 
                         icon.paintIcon(editor.component, g, targetRegion.x + margin, targetRegion.y + margin)
                     }
