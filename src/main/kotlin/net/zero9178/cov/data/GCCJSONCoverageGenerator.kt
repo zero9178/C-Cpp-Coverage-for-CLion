@@ -134,29 +134,70 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     }
 
                     override fun visitBinaryExpression(expression: OCBinaryExpression?) {
-                        super.visitBinaryExpression(expression)
-                        expression ?: return
+                        /*
+                        The branch matches the operator location. Determining the operands is much harder however
+                         */
+                        if (expression == null || !TextRange(
+                                startOffset,
+                                lineEndOffset
+                            ).contains(expression.operationSignNode.textRange)
+                        ) {
+                            return super.visitBinaryExpression(expression)
+                        }
+                        /*
+                        Looking at gimple one can see that for each operand of a boolean expression gcc generates
+                        an if. The problem is that we get a branch for each of those if and the source location of this
+                        if is at first glance inconsistent. Following code snippets:
+                        3| return 5
+                        5| &&
+                        6| 6
+                        7| &&
+                        8| 7;
+
+                        Will generate 6 branches in gcov (2 per if. Where one says how often the if was true and the other
+                        how often it was false) The source location of the first of the first branch, the one
+                        corresponding to the 5 at line 3, is actually at the && operator on line 7. Meanwhile the 6 at
+                        line 6 corresponds to the && at line 5. Lastly the 7 at line 8 corresponds to again the && on line 7.
+
+                        In summary gcov reports 4 branches at line 7 and one at line 5 where 2 of the ones at line 7
+                        correspond to the 5 at line 3 and the second pair to the 7 at line 8. Yikes
+
+                        This is due to how source location is generated within the c_parser_binary_expression function in c-parser.c
+                        (corresponding C++ parser does the same). GCC uses a operator precedence parser which
+                        somehow generates weird source location in case of two operators following each other and the second
+                        one not having higher precedence then the other.
+
+                        So if we have a boolean operation of the form E op1 E op2 E
+                        Then we have the above mentioned issue for:
+                         op1 | op2
+                         ---------
+                          && | &&
+                          && | ||
+                          || | ||
+
+                         Only || with && works as the operator precedence increases.
+
+                         Solution is not yet discovered
+
+                         */
                         when (expression.operationSignNode.text) {
                             "||", "or", "&&", "and" -> {
                                 //Calling with the operands here as it creates a branch for each operand
                                 val left = expression.left
                                 if (left != null) {
-                                    if (PsiTreeUtil.findChildrenOfType(left, OCBinaryExpression::class.java).none {
-                                            listOf("||", "or", "&&", "and").contains(it.operationSignNode.text)
-                                        }) {
-                                        matchBranch(left)
-                                    }
+
                                 }
                                 val right = expression.right
                                 if (right != null) {
-                                    if (PsiTreeUtil.findChildrenOfType(right, OCBinaryExpression::class.java).none {
-                                            listOf("||", "or", "&&", "and").contains(it.operationSignNode.text)
-                                        }) {
-                                        matchBranch(right)
-                                    }
+
                                 }
                             }
+                            else -> super.visitBinaryExpression(expression)
                         }
+                    }
+
+                    override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {
+                        return
                     }
                 }.visitElement(psiFile)
 

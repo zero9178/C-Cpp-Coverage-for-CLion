@@ -1,9 +1,14 @@
 package net.zero9178.cov.editor
 
 import com.intellij.codeInsight.highlighting.HighlightManager
+import com.intellij.codeInsight.hints.presentation.IconPresentation
+import com.intellij.codeInsight.hints.presentation.PresentationRenderer
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.editor.*
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.LogicalPosition
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.editor.event.EditorFactoryEvent
@@ -13,13 +18,10 @@ import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
-import com.intellij.util.IconUtil
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
 import java.awt.Font
-import java.awt.Graphics
-import java.awt.Rectangle
 
 class CoverageHighlighter(private val myProject: Project) {
     init {
@@ -42,14 +44,14 @@ class CoverageHighlighter(private val myProject: Project) {
         val info = myHighlighting[path] ?: return
         val ranges = myActiveHighlighting.getOrPut(path) { mutableListOf() }
         for ((start, end, covered) in info.highLightedLines) {
-            val color =
+            val colour =
                 colorScheme.getAttributes(if (covered) CodeInsightColors.LINE_FULL_COVERAGE else CodeInsightColors.LINE_NONE_COVERAGE)
                     .foregroundColor
             highlightManager.addRangeHighlight(
                 editor,
                 editor.logicalPositionToOffset(start),
                 editor.logicalPositionToOffset(end),
-                TextAttributes(null, color, null, EffectType.SEARCH_MATCH, Font.PLAIN),
+                TextAttributes(null, colour, null, EffectType.SEARCH_MATCH, Font.PLAIN),
                 false,
                 ranges
             )
@@ -57,31 +59,12 @@ class CoverageHighlighter(private val myProject: Project) {
         myActiveInlays.plusAssign(info.branchInfo.map { (startPos, steppedIn, skipped) ->
             editor.inlayModel.addInlineElement(
                 editor.logicalPositionToOffset(startPos),
-                object : EditorCustomElementRenderer {
-
-                    override fun paint(
-                        inlay: Inlay<*>,
-                        g: Graphics,
-                        targetRegion: Rectangle,
-                        textAttributes: TextAttributes
-                    ) {
-                        val margin = 1
-                        val icon = IconUtil.toSize(
-                            if (steppedIn && skipped) AllIcons.Actions.Commit else AllIcons.General.Error,
-                            targetRegion.height - 2 * margin,
-                            targetRegion.height - 2 * margin
-                        )
-
-                        g.color = textAttributes.backgroundColor
-                        g.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
-
-                        icon.paintIcon(editor.component, g, targetRegion.x + margin, targetRegion.y + margin)
-                    }
-
-                    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-                        return calcHeightInPixels(inlay)
-                    }
-                }
+                PresentationRenderer(
+                    IconPresentation(
+                        if (steppedIn && skipped) AllIcons.Actions.Commit else AllIcons.General.Error,
+                        editor.contentComponent
+                    )
+                )
             )
         })
     }
