@@ -1,14 +1,8 @@
 package net.zero9178.cov.editor
 
 import com.intellij.codeInsight.highlighting.HighlightManager
-import com.intellij.codeInsight.hints.presentation.IconPresentation
-import com.intellij.codeInsight.hints.presentation.PresentationRenderer
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.EditorFactory
-import com.intellij.openapi.editor.Inlay
-import com.intellij.openapi.editor.LogicalPosition
+import com.intellij.openapi.editor.*
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.editor.event.EditorFactoryEvent
@@ -18,10 +12,15 @@ import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.util.IconUtil
+import icons.CoverageIcons
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Rectangle
+import java.awt.image.RGBImageFilter
 
 class CoverageHighlighter(private val myProject: Project) {
     init {
@@ -56,15 +55,53 @@ class CoverageHighlighter(private val myProject: Project) {
                 ranges
             )
         }
+
         myActiveInlays.plusAssign(info.branchInfo.map { (startPos, steppedIn, skipped) ->
             editor.inlayModel.addInlineElement(
                 editor.logicalPositionToOffset(startPos),
-                PresentationRenderer(
-                    IconPresentation(
-                        if (steppedIn && skipped) AllIcons.Actions.Commit else AllIcons.General.Error,
-                        editor.contentComponent
-                    )
-                )
+                object : EditorCustomElementRenderer {
+
+                    override fun paint(
+                        inlay: Inlay<*>,
+                        g: Graphics,
+                        targetRegion: Rectangle,
+                        textAttributes: TextAttributes
+                    ) {
+                        val margin = 1
+                        var icon = IconUtil.toSize(
+                            if (steppedIn && skipped) CoverageIcons.BRANCH_COVERED else CoverageIcons.BRANCH_NOT_COVERED,
+                            targetRegion.height - 2 * margin,
+                            targetRegion.height - 2 * margin
+                        )
+
+                        val backgroundColour = textAttributes.backgroundColor
+
+                        //This somehow fixes my issue of having a black background behind coverage Icons and I do not
+                        //fully understand why. But lets just keep it
+                        icon = IconUtil.filterIcon(icon, {
+                            object : RGBImageFilter() {
+
+                                init {
+                                    canFilterIndexColorModel = true
+                                }
+
+                                override fun filterRGB(x: Int, y: Int, rgb: Int): Int {
+                                    return if (rgb == 0) {
+                                        backgroundColour.rgb
+                                    } else {
+                                        rgb
+                                    }
+                                }
+                            }
+                        }, editor.component) ?: icon
+
+                        icon.paintIcon(editor.component, g, targetRegion.x + margin, targetRegion.y + margin)
+                    }
+
+                    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+                        return calcHeightInPixels(inlay)
+                    }
+                }
             )
         })
     }

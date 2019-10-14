@@ -31,6 +31,7 @@ import java.io.StringReader
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.math.ceil
+import kotlin.math.min
 
 class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
@@ -48,7 +49,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             val document =
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
-            lines.filter { it.branches.isNotEmpty() }.flatMap { line ->
+            val linesWithBranches = lines.filter { it.branches.isNotEmpty() }
+            linesWithBranches.mapIndexed { index, line ->
                 val startOffset = document.getLineStartOffset(line.lineNumber - 1)
                 val lineEndOffset = document.getLineEndOffset(line.lineNumber - 1)
                 val result = mutableListOf<OCElement>()
@@ -59,6 +61,9 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         lineEndOffset
                     )
                 ) {
+
+                    private var myFirstBoolean: OCBinaryExpression? = null
+
                     override fun visitLoopStatement(loop: OCLoopStatement?) {
                         loop ?: return super.visitLoopStatement(loop)
                         matchBranch(loop)
@@ -117,11 +122,6 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                                     return
                                 }
                             }
-                            else -> {
-                                if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
-                                    return
-                                }
-                            }
                         }
 
                         if (element is OCLoopStatement) {
@@ -134,16 +134,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     }
 
                     override fun visitBinaryExpression(expression: OCBinaryExpression?) {
-                        /*
-                        The branch matches the operator location. Determining the operands is much harder however
-                         */
-                        if (expression == null || !TextRange(
-                                startOffset,
-                                lineEndOffset
-                            ).contains(expression.operationSignNode.textRange)
-                        ) {
-                            return super.visitBinaryExpression(expression)
-                        }
+                        expression ?: return super.visitBinaryExpression(expression)
+
                         /*
                         Looking at gimple one can see that for each operand of a boolean expression gcc generates
                         an if. The problem is that we get a branch for each of those if and the source location of this
@@ -166,22 +158,106 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         (corresponding C++ parser does the same). GCC uses a operator precedence parser which has a stack
                         that pushes if the operator afterwards and pops top and combining it with the expression
                         underneath. Each pop results in the resulting expression having the source location of the
-                        operand in between the expressions.
+                        operand in between the expressions. As pops occur earlier when precedence is not ascending
+                        we get different source locations.
+
+                        For E1 || E2 && E3 we get first get E1 pushed, then || with E2 and last && with E3. At this point
+                        the parser finished and must now pop the whole stack to return an expression. First it will combine
+                        E2 with the top of the stack which is && and E3. Therefore the stack is now [0] = E1, [1] = || (E2 && E3).
+                        [1] has the source location of the && operator. Next step they get popped off again and merged with
+                        E1. Therefore we get [0] = E1 || (E2 && E3). With the source location being at ||. This means
+                        that the whole expression has that source location and the very first boolean expression that
+                        is going to be executed is going to have its branches associated with the line of the ||.
+
+                        The problematic case is E1 &&(1) E2 &&(2) E3. First we get E1 pushed again. After that &&(1) and E2.
+                        After that it will see that the about to be pushed &&(2) has the same or lower precedence (same
+                        in this case) and before pushing it pops the top off and merges it with the one below. Therefore
+                        we now have [0] = E1 &&(1) E2, and after the push also [1] &&(2) E3. [0] has its branch source
+                        location associated with &&(1). Now we are done with the expression and need to pop until we have
+                        a single expression again. Therefore we get E1 &&(1) E2 &&(2) E3. The source location of the whole
+                        expression is now the one of &&(2) which means the branch of E1 is located at the line where
+                        &&(2) is located. Yikes. E2 branches are located at &&(1) and E3 at &&(2).
+
+
+                        Therefore in general operators branches have source locations of its operator to the left except
+                        for the very first operand which is at the source location of the whole expression. The source
+                        location of the whole expression is the one of the operator of the highest boolean expression in
+                        the AST.
 
                          */
-                        when (expression.operationSignNode.text) {
-                            "||", "or", "&&", "and" -> {
-                                //Calling with the operands here as it creates a branch for each operand
-                                val left = expression.left
-                                if (left != null) {
 
+                        fun OCExpression.isBooleanExpression() =
+                            this is OCBinaryExpression && listOf("||", "or", "&&", "and").any {
+                                it == this.operationSignNode.text
+                            }
+
+                        if (!expression.isBooleanExpression()) {
+                            return super.visitBinaryExpression(expression)
+                        }
+
+                        var isFirst = false
+                        if (myFirstBoolean == null) {
+                            myFirstBoolean = expression
+                            isFirst = true
+                            // I am the top boolean expression in the AST. I got two extra branches which
+                            // actually belong to the deepest (aka first to execute) expression which could even be Me!
+                            //Lets find this deepest branch
+
+                            var iterations = 0
+                            var deepest: OCBinaryExpression = expression
+                            while (deepest.left?.isBooleanExpression() == true) {
+                                iterations++
+                                deepest = deepest.left!! as OCBinaryExpression
+                            }
+                            val left = deepest.left
+                            if (left != null && TextRange(
+                                    startOffset,
+                                    lineEndOffset
+                                ).contains(deepest.operationSignNode.textRange)
+                            ) {
+                                //We can safely assume that we are the beginning of the boolean expression. Even if we may
+                                //not be on the line of expression yet. We will just record how many branches we had to move
+                                //from top to deepest and walk that distance back with the branches instead. Since there's
+                                //always two branches per statement we need to walk two at the time. If we run out of
+                                //branches in this line we will go a line further
+
+                                var currentLineIndex = index
+                                var currentBranchIndex = result.size * 2
+                                while (iterations != 0 && currentLineIndex < linesWithBranches.size) {
+                                    val min = min(
+                                        (linesWithBranches[currentLineIndex].branches.size - currentBranchIndex) / 2,
+                                        iterations
+                                    )
+                                    iterations -= min
+                                    currentBranchIndex += min * 2
+                                    if (currentBranchIndex > linesWithBranches[currentLineIndex].branches.lastIndex) {
+                                        currentBranchIndex = 0
+                                        currentLineIndex++
+                                    }
                                 }
-                                val right = expression.right
-                                if (right != null) {
-
+                                if (iterations == 0 && currentLineIndex < linesWithBranches.size) {
+                                    line.branches.addAll(
+                                        result.size * 2,
+                                        linesWithBranches[currentLineIndex].branches.slice(currentBranchIndex..currentBranchIndex + 1)
+                                    )
+                                    linesWithBranches[currentLineIndex].branches.removeAt(currentBranchIndex)
+                                    linesWithBranches[currentLineIndex].branches.removeAt(currentBranchIndex)
+                                    matchBranch(left)
                                 }
                             }
-                            else -> super.visitBinaryExpression(expression)
+                        }
+
+                        if (TextRange(startOffset, lineEndOffset).contains(expression.operationSignNode.textRange)) {
+                            val right = expression.right
+                            if (right != null) {
+                                matchBranch(right)
+                            }
+                        }
+
+                        super.visitBinaryExpression(expression)
+
+                        if (isFirst) {
+                            myFirstBoolean = null
                         }
                     }
 
@@ -191,7 +267,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                 }.visitElement(psiFile)
 
                 val zip =
-                    line.branches.chunked(2).filter { it.none { branch -> branch.throwing } && it.size == 2 }
+                    line.branches.chunked(2).filter { it.size == 2 }
                         .map { it[0] to it[1] }
                         .zip(result)
 
@@ -370,7 +446,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         }(), steppedIn.count, skipped.count
                     )
                 }
-            }
+            }.flatten()
         }
     }
 
@@ -416,11 +492,15 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     )
 
     private data class Line(
-        val branches: List<Branch>,
+        val branches: MutableList<Branch>,
         val count: Long, @Json(name = "line_number") val lineNumber: Int, @Json(name = "unexecuted_block") val unexecutedBlock: Boolean, @Json(
             name = "function_name"
         ) val functionName: String = ""
-    )
+    ) {
+        init {
+            branches.removeIf { it.throwing }
+        }
+    }
 
     private data class Branch(val count: Int, val fallthrough: Boolean, @Json(name = "throw") val throwing: Boolean)
 
@@ -464,14 +544,14 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         } else {
             emptyList()
         } + files
-        val p = environment.hostMachine.runProcess(GeneralCommandLine(command).withRedirectErrorStream(true), null, -1)
+        val p = environment.hostMachine.runProcess(GeneralCommandLine(command), null, -1)
         val lines = p.stdoutLines
         val retCode = p.exitCode
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
                 "gcov returned error code $retCode",
                 "Invocation and error output:",
-                "Invocation: ${command.joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
+                "Invocation: ${command.joinToString(" ")}\n Stderr: ${p.stderrLines.joinToString("\n")}",
                 NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)
