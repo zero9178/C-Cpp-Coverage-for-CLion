@@ -155,7 +155,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         8| 7;
 
                         Will generate 6 branches in gcov (2 per if. Where one says how often the if was true and the other
-                        how often it was false) The source location of the first of the first branch, the one
+                        how often it was false). The source location of the first of the first branch, the one
                         corresponding to the 5 at line 3, is actually at the && operator on line 7. Meanwhile the 6 at
                         line 6 corresponds to the && at line 5. Lastly the 7 at line 8 corresponds to again the && on line 7.
 
@@ -163,21 +163,10 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         correspond to the 5 at line 3 and the second pair to the 7 at line 8. Yikes
 
                         This is due to how source location is generated within the c_parser_binary_expression function in c-parser.c
-                        (corresponding C++ parser does the same). GCC uses a operator precedence parser which
-                        somehow generates weird source location in case of two operators following each other and the second
-                        one not having higher precedence then the other.
-
-                        So if we have a boolean operation of the form E op1 E op2 E
-                        Then we have the above mentioned issue for:
-                         op1 | op2
-                         ---------
-                          && | &&
-                          && | ||
-                          || | ||
-
-                         Only || with && works as the operator precedence increases.
-
-                         Solution is not yet discovered
+                        (corresponding C++ parser does the same). GCC uses a operator precedence parser which has a stack
+                        that pushes if the operator afterwards and pops top and combining it with the expression
+                        underneath. Each pop results in the resulting expression having the source location of the
+                        operand in between the expressions.
 
                          */
                         when (expression.operationSignNode.text) {
