@@ -17,9 +17,7 @@ import com.intellij.util.IconUtil
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
-import java.awt.Font
-import java.awt.Graphics
-import java.awt.Rectangle
+import java.awt.*
 
 class CoverageHighlighter(private val myProject: Project) {
     init {
@@ -42,18 +40,19 @@ class CoverageHighlighter(private val myProject: Project) {
         val info = myHighlighting[path] ?: return
         val ranges = myActiveHighlighting.getOrPut(path) { mutableListOf() }
         for ((start, end, covered) in info.highLightedLines) {
-            val color =
+            val colour =
                 colorScheme.getAttributes(if (covered) CodeInsightColors.LINE_FULL_COVERAGE else CodeInsightColors.LINE_NONE_COVERAGE)
                     .foregroundColor
             highlightManager.addRangeHighlight(
                 editor,
                 editor.logicalPositionToOffset(start),
                 editor.logicalPositionToOffset(end),
-                TextAttributes(null, color, null, EffectType.SEARCH_MATCH, Font.PLAIN),
+                TextAttributes(null, colour, null, EffectType.SEARCH_MATCH, Font.PLAIN),
                 false,
                 ranges
             )
         }
+
         myActiveInlays.plusAssign(info.branchInfo.map { (startPos, steppedIn, skipped) ->
             editor.inlayModel.addInlineElement(
                 editor.logicalPositionToOffset(startPos),
@@ -72,10 +71,10 @@ class CoverageHighlighter(private val myProject: Project) {
                             targetRegion.height - 2 * margin
                         )
 
-                        g.color = textAttributes.backgroundColor
-                        g.fillRect(targetRegion.x, targetRegion.y, targetRegion.width, targetRegion.height)
-
-                        icon.paintIcon(editor.component, g, targetRegion.x + margin, targetRegion.y + margin)
+                        val graphics = g.create() as Graphics2D
+                        graphics.composite = AlphaComposite.SrcAtop.derive(1.0f)
+                        icon.paintIcon(editor.component, graphics, targetRegion.x + margin, targetRegion.y + margin)
+                        graphics.dispose()
                     }
 
                     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
