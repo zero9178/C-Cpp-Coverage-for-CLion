@@ -17,10 +17,7 @@ import icons.CoverageIcons
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
-import java.awt.Font
-import java.awt.Graphics
-import java.awt.Rectangle
-import java.awt.image.RGBImageFilter
+import java.awt.*
 
 class CoverageHighlighter(private val myProject: Project) {
     init {
@@ -68,34 +65,16 @@ class CoverageHighlighter(private val myProject: Project) {
                         textAttributes: TextAttributes
                     ) {
                         val margin = 1
-                        var icon = IconUtil.toSize(
+                        val icon = IconUtil.toSize(
                             if (steppedIn && skipped) CoverageIcons.BRANCH_COVERED else CoverageIcons.BRANCH_NOT_COVERED,
                             targetRegion.height - 2 * margin,
                             targetRegion.height - 2 * margin
                         )
 
-                        val backgroundColour = textAttributes.backgroundColor
-
-                        //This somehow fixes my issue of having a black background behind coverage Icons and I do not
-                        //fully understand why. But lets just keep it
-                        icon = IconUtil.filterIcon(icon, {
-                            object : RGBImageFilter() {
-
-                                init {
-                                    canFilterIndexColorModel = true
-                                }
-
-                                override fun filterRGB(x: Int, y: Int, rgb: Int): Int {
-                                    return if (rgb == 0) {
-                                        backgroundColour.rgb
-                                    } else {
-                                        rgb
-                                    }
-                                }
-                            }
-                        }, editor.component) ?: icon
-
-                        icon.paintIcon(editor.component, g, targetRegion.x + margin, targetRegion.y + margin)
+                        val graphics = g.create() as Graphics2D
+                        graphics.composite = AlphaComposite.SrcAtop.derive(1.0f)
+                        icon.paintIcon(editor.component, graphics, targetRegion.x + margin, targetRegion.y + margin)
+                        graphics.dispose()
                     }
 
                     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
