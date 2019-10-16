@@ -7,7 +7,6 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
@@ -31,6 +30,7 @@ import java.io.StringReader
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.math.ceil
+import kotlin.math.min
 
 private fun OCExpression.isBooleanExpression() =
     this is OCBinaryExpression && listOf("||", "or", "&&", "and").any {
@@ -75,31 +75,51 @@ private fun addBranchCoverageForExpression(
 private fun findBranches(
     psiFile: PsiFile,
     range: TextRange,
-    document: Document,
+    linesWithBranches: List<Line>,
+    index: Int,
     branches: MutableList<Pair<Int, Int>>,
     booleanCondIfMap: MutableMap<OCElement, Pair<Int, Int>>,
     patchHandled: MutableSet<OCBinaryExpression>
-): Pair<List<OCElement>, List<CoverageBranchData>> {
+): List<OCElement> {
     val statements = mutableListOf<OCElement>()
     object : OCRecursiveVisitor(range) {
 
         private var myFirstBoolean: OCBinaryExpression? = null
+        private var myDeepest: OCExpression? = null
 
         override fun visitLoopStatement(loop: OCLoopStatement?) {
             loop ?: return super.visitLoopStatement(loop)
-            statements += loop
+            var cond = loop.condition ?: return super.visitLoopStatement(loop)
+            while (cond is OCParenthesizedExpression) {
+                cond = cond.operand ?: break
+            }
+            val offset = when (cond) {
+                is OCBinaryExpression -> {
+                    cond.operationSignNode.startOffset
+                }
+                is OCCallExpression -> {
+                    cond.argumentList.leftPar?.textOffset ?: cond.argumentList.textOffset
+                }
+                else -> cond.textOffset
+            }
+            if (range.contains(offset)) {
+                statements += loop
+            }
             super.visitLoopStatement(loop)
         }
 
         override fun visitIfStatement(stmt: OCIfStatement?) {
             stmt ?: return super.visitIfStatement(stmt)
-            statements += stmt
+            val offset = stmt.textOffset + 1
+            if (range.contains(offset)) {
+                statements += stmt
+            }
             super.visitIfStatement(stmt)
         }
 
         override fun visitConditionalExpression(expression: OCConditionalExpression?) {
             expression ?: return super.visitConditionalExpression(expression)
-            statements += expression
+            //statements += expression
             super.visitConditionalExpression(expression)
         }
 
@@ -161,6 +181,7 @@ private fun findBranches(
             }
 
             var isFirst = false
+            var hadToPatch = false
             if (myFirstBoolean == null) {
                 myFirstBoolean = expression
                 isFirst = true
@@ -206,16 +227,43 @@ private fun findBranches(
                             else -> break@loop
                         }
                     }
-                    val left = deepest.left
-                    if (left != null && range.contains(deepest.operationSignNode.textRange)
-                    ) {
-
+                    myDeepest = deepest
+                    if (range.contains(deepest.operationSignNode.startOffset) && range.contains(expression.operationSignNode.startOffset)) {
                         patchHandled.add(expression)
-                        addBranchCoverageForExpression(
-                            left,
-                            branches[statements.size].first to branches[statements.size].second,
-                            booleanCondIfMap
-                        )
+                    } else {
+                        //We can safely assume that we are the beginning of the boolean expression. Even if we may
+                        //not be on the line of expression yet. We will just record how many branches we had to move
+                        //from top to deepest and walk that distance back with the branches instead. Since there's
+                        //always two branches per statement we need to walk two at the time. If we run out of
+                        //branches in this line we will go a line further
+
+                        var currentLineIndex = index
+                        var currentBranchIndex = statements.size
+                        while (iterations != 0 && currentLineIndex < linesWithBranches.size) {
+                            val min = min(
+                                linesWithBranches[currentLineIndex].branches.size - currentBranchIndex,
+                                iterations
+                            )
+                            iterations -= min
+                            currentBranchIndex += min
+                            if (currentBranchIndex > linesWithBranches[currentLineIndex].branches.lastIndex) {
+                                currentBranchIndex = 0
+                                currentLineIndex++
+                            }
+                        }
+                        val left = deepest.left
+                        if (iterations == 0 && currentLineIndex < linesWithBranches.size && left != null && range.contains(
+                                deepest.operationSignNode.textRange
+                            )
+                        ) {
+                            patchHandled.add(expression)
+                            hadToPatch = true
+                            addBranchCoverageForExpression(
+                                left,
+                                linesWithBranches[currentLineIndex].branches[currentBranchIndex],
+                                booleanCondIfMap
+                            )
+                        }
                     }
                 }
             }
@@ -223,14 +271,27 @@ private fun findBranches(
             expression.left?.accept(this)
 
             if (range.contains(expression.operationSignNode.textRange)) {
-                if (isFirst) {
+                if (hadToPatch) {
                     branches.removeAt(statements.size)
+                }
+                if (myDeepest === expression && range.contains(expression.operationSignNode.startOffset) &&
+                    (myFirstBoolean?.let { range.contains(it.operationSignNode.startOffset) } == true)
+                ) {
+                    val left = expression.left
+                    if (left != null) {
+                        addBranchCoverageForExpression(
+                            left,
+                            branches[statements.size],
+                            booleanCondIfMap
+                        )
+                        branches.removeAt(statements.size)
+                    }
                 }
                 val right = expression.right
                 if (right != null) {
                     addBranchCoverageForExpression(
                         right,
-                        branches[statements.size].first to branches[statements.size].second,
+                        branches[statements.size],
                         booleanCondIfMap
                     )
                     branches.removeAt(statements.size)
@@ -257,7 +318,7 @@ private fun findBranches(
             return
         }
     }.visitElement(psiFile)
-    return statements to emptyList()
+    return statements
 }
 
 private fun getBranchData(
@@ -276,17 +337,17 @@ private fun getBranchData(
                 ?: return@runReadActionInSmartMode emptyList()
         val handled = mutableSetOf<OCBinaryExpression>()
         val booleanCondIfMap = mutableMapOf<OCElement, Pair<Int, Int>>()
-        lines.filter { it.branches.isNotEmpty() }.map { line ->
+        val linesWithBranches = lines.filter { it.branches.isNotEmpty() }
+        linesWithBranches.mapIndexed { index, line ->
 
             val branches = line.branches.toMutableList()
-            val (result, initial) = findBranches(
+            val result = findBranches(
                 psiFile,
                 TextRange(
                     document.getLineStartOffset(line.lineNumber - 1),
                     document.getLineEndOffset(line.lineNumber - 1)
                 ),
-                document,
-                branches,
+                linesWithBranches, index, branches,
                 booleanCondIfMap,
                 handled
             )
@@ -294,73 +355,17 @@ private fun getBranchData(
             val zip = branches.zip(result)
 
             fun PsiElement.getBranchMarkOffset(): Int? {
-                return when {
-                    this is OCIfStatement -> this.lParenth?.startOffset
-                    this is OCLoopStatement -> this.lParenth?.startOffset
-                    this is OCConditionalExpression -> PsiTreeUtil.findSiblingForward(
+                return when (this) {
+                    is OCIfStatement -> this.lParenth?.startOffset
+                    is OCLoopStatement -> this.lParenth?.startOffset
+                    is OCConditionalExpression -> PsiTreeUtil.findSiblingForward(
                         this.condition,
                         OCTokenTypes.QUEST,
                         null
                     )?.node?.textRange?.endOffset
-                    this is OCBinaryExpression && this.isBooleanExpression() -> {
-                        this.operationSignNode.textRange.endOffset
-                    }
-                    this is OCExpression -> {
-                        this.parent.getBranchMarkOffset()
-                    }
                     else -> null
                 }
             }
-
-//                val stmts = leftOutStmts.map { thisStmt ->
-//                    val filter =
-//                        zip.filter { thisStmt.getCondition()?.textRange?.contains(it.second.textRange) ?: false }
-//                    thisStmt to filter
-//                        .foldIndexed<Pair<Pair<Int, Int>, OCElement>, Pair<Int, Int>?>(null) { index, current, (branches, element) ->
-//                            val steppedIn = branches.first
-//                            val skipped = branches.second
-//
-//                            //if current != null than operand is always the one in the second branch so to say
-//                            val parentExpression = element.parent as? OCBinaryExpression ?: return@foldIndexed current
-//                            val isLast = index == filter.lastIndex
-//                            when (parentExpression.operationSignNode.text) {
-//                                "or", "||" -> if (current == null) {
-//                                    skipped to steppedIn
-//                                } else {
-//                                    if (current.second != 0) {
-//                                        if (isLast) {
-//                                            current.first + skipped to steppedIn
-//                                        } else {
-//                                            current.first + steppedIn to skipped
-//                                        }
-//                                    } else {
-//                                        current
-//                                    }
-//                                }
-//                                "and", "&&" -> if (current == null) {
-//                                    steppedIn to skipped
-//                                } else {
-//                                    if (current.first != 0) {
-//                                        steppedIn to current.second + skipped
-//                                    } else {
-//                                        current
-//                                    }
-//                                }
-//                                else -> current
-//                            }
-//                        }
-//                }.filter { it.second != null }.map { it.first to it.second!! }.map { (thisIf, pair) ->
-//                    val startLine =
-//                        document.getLineNumber(thisIf.getBranchMarkOffset() ?: thisIf.textOffset) + 1
-//                    val startColumn =
-//                        (thisIf.getBranchMarkOffset() ?: thisIf.textOffset) - document.getLineStartOffset(
-//                            startLine - 1
-//                        ) + 1
-//                    CoverageBranchData(
-//                        startLine toCP startColumn,
-//                        pair.first, pair.second
-//                    )
-//                }
 
             zip.filter {
                 when (it.second) {
@@ -370,8 +375,8 @@ private fun getBranchData(
                     is OCExpression -> CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
                     else -> true
                 }
-            }.fold(initial) { list, (branches, element) ->
-                list + CoverageBranchData(
+            }.map { (branches, element) ->
+                CoverageBranchData(
                     {
                         val startLine =
                             document.getLineNumber(
@@ -386,7 +391,43 @@ private fun getBranchData(
                     }(), branches.first, branches.second
                 )
             }
-        }.flatten()
+        }.flatten() + booleanCondIfMap.toList().fold(emptyList<CoverageBranchData>()) { list, (element, coverage) ->
+            when (element) {
+                is OCIfStatement -> {
+                    val offset = element.lParenth?.startOffset ?: element.textOffset
+                    val line = document.getLineNumber(offset) + 1
+                    list + CoverageBranchData(
+                        line toCP offset - document.getLineStartOffset(line - 1) + 1,
+                        coverage.first,
+                        coverage.second
+                    )
+                }
+                is OCConditionalExpression -> {
+                    val quest = PsiTreeUtil.findSiblingForward(element, OCTokenTypes.QUEST, null)
+                    val offset = quest?.textOffset ?: element.condition.textRange.endOffset
+                    val line = document.getLineNumber(offset) + 1
+                    list + CoverageBranchData(
+                        line toCP offset - document.getLineStartOffset(line - 1) + 1,
+                        coverage.first,
+                        coverage.second
+                    )
+                }
+                else -> {
+                    val parent = element.parent
+                    if (parent !is OCBinaryExpression || !parent.isBooleanExpression() || element !== parent.left) {
+                        list
+                    } else {
+                        val offset = parent.operationSignNode.textRange.endOffset
+                        val line = document.getLineNumber(offset) + 1
+                        list + CoverageBranchData(
+                            line toCP offset - document.getLineStartOffset(line - 1) + 1,
+                            coverage.first,
+                            coverage.second
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
