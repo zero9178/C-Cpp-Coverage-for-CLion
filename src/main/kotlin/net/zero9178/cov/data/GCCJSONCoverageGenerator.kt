@@ -7,13 +7,13 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
@@ -33,15 +33,14 @@ import kotlin.math.ceil
 import kotlin.math.min
 
 private fun OCExpression.isBooleanExpression() =
-    this is OCBinaryExpression && listOf("||", "or", "&&", "and").any {
-        it == this.operationSignNode.text
-    }
+    this is OCBinaryExpression && (this.operationSign === OCTokenTypes.ANDAND || this.operationSign === OCTokenTypes.OROR)
 
 
 private fun addBranchCoverageForExpression(
     expression: OCExpression,
     coverage: Pair<Int, Int>,
-    booleanMap: MutableMap<OCElement, Pair<Int, Int>>
+    booleanMap: MutableMap<OCElement, Pair<Int, Int>>,
+    leftOutStmts: MutableList<OCElement>
 ) {
     booleanMap[expression] = coverage
     var prev = expression
@@ -56,11 +55,11 @@ private fun addBranchCoverageForExpression(
                 return
             }
             val lhs = parent.left?.let { booleanMap[it] } ?: return
-            currentCoverage = when (parent.operationSignNode.text) {
-                "||", "or" -> {
+            currentCoverage = when (parent.operationSign) {
+                OCTokenTypes.OROR -> {
                     lhs.first + currentCoverage.first to currentCoverage.second
                 }
-                "&&", "and" -> {
+                OCTokenTypes.ANDAND -> {
                     currentCoverage.first to lhs.second + currentCoverage.second
                 }
                 else -> return
@@ -68,12 +67,68 @@ private fun addBranchCoverageForExpression(
             booleanMap[parent] = currentCoverage
         }
         prev = parent
-        parent = parent.parent as? OCExpression ?: return
+        parent = parent.parent as? OCExpression ?: break
+    }
+
+    val stmt = leftOutStmts.find {
+        when (it) {
+            is OCIfStatement -> it.condition?.expression === prev
+            is OCConditionalExpression -> it.condition === prev
+            else -> false
+        }
+    }
+    if (stmt != null) {
+        booleanMap[stmt] = currentCoverage
     }
 }
 
+/**
+ * expression has side effects according to gcc/gimplify.c recalculate_side_effects
+ */
+private fun hasSideEffects(condition: OCExpression?): Boolean {
+    condition ?: return true
+    var result = false
+    object : OCRecursiveVisitor() {
+        override fun visitElement(element: PsiElement?) {
+            if (!result) {
+                super.visitElement(element)
+            }
+        }
+
+        override fun visitCallExpression(expression: OCCallExpression?) {
+            result = true
+        }
+
+        override fun visitExpression(expr: OCExpression?) {
+            expr ?: return super.visitExpression(expr)
+            if (expr.resolvedType.isVolatile) {
+                result = true
+            } else {
+                super.visitExpression(expr)
+            }
+        }
+
+        override fun visitUnaryExpression(expression: OCUnaryExpression?) {
+            expression ?: return super.visitUnaryExpression(expression)
+            when (expression.operationSign) {
+                OCTokenTypes.PLUSPLUS, OCTokenTypes.MINUSMINUS -> result = true
+                else -> super.visitUnaryExpression(expression)
+            }
+        }
+
+        override fun visitSizeofExpression(expression: OCSizeofExpression?) {}
+
+        override fun visitAssignmentExpression(expression: OCAssignmentExpression?) {
+            result = true
+        }
+
+        override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {}
+    }.visitElement(condition)
+    return result
+}
+
 private fun findBranches(
-    psiFile: PsiFile,
+    ocFile: OCFile,
     range: TextRange,
     linesWithBranches: List<Line>,
     index: Int,
@@ -82,7 +137,10 @@ private fun findBranches(
     patchHandled: MutableSet<OCBinaryExpression>
 ): List<OCElement> {
     val statements = mutableListOf<OCElement>()
+    val leftOutStmts = mutableListOf<OCElement>()
     object : OCRecursiveVisitor(range) {
+
+        private val myLogger = Logger.getInstance(GCCJSONCoverageGenerator::class.java)
 
         private var myFirstBoolean: OCBinaryExpression? = null
         private var myDeepest: OCExpression? = null
@@ -108,18 +166,41 @@ private fun findBranches(
             super.visitLoopStatement(loop)
         }
 
+        private fun addCond(original: OCElement, condition: OCExpression) {
+            var currentCond: OCExpression? = condition
+            while (currentCond is OCParenthesizedExpression) {
+                currentCond = currentCond.operand
+            }
+            if (currentCond == null || !currentCond.isBooleanExpression() || original !is OCIfStatement || (ocFile.isCpp && hasSideEffects(
+                    condition
+                ))
+            ) {
+                statements += original
+            } else {
+                //If current has boolean expressions the gimplify step removes the if
+                leftOutStmts += original
+            }
+        }
+
         override fun visitIfStatement(stmt: OCIfStatement?) {
             stmt ?: return super.visitIfStatement(stmt)
             val offset = stmt.textOffset + 1
-            if (range.contains(offset)) {
-                statements += stmt
+            if (range.contains(offset) && !((stmt.thenBranch as? OCBlockStatement)?.statements.isNullOrEmpty()
+                        && (stmt.elseBranch as? OCBlockStatement)?.statements.isNullOrEmpty())
+            ) {
+                val expression = stmt.condition?.expression ?: return super.visitIfStatement(stmt)
+                addCond(stmt, expression)
             }
             super.visitIfStatement(stmt)
         }
 
         override fun visitConditionalExpression(expression: OCConditionalExpression?) {
             expression ?: return super.visitConditionalExpression(expression)
-            //statements += expression
+            val element = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
+                ?: return super.visitConditionalExpression(expression)
+            if (range.contains(element.textOffset)) {
+                addCond(expression, expression.condition)
+            }
             super.visitConditionalExpression(expression)
         }
 
@@ -261,7 +342,7 @@ private fun findBranches(
                             addBranchCoverageForExpression(
                                 left,
                                 linesWithBranches[currentLineIndex].branches[currentBranchIndex],
-                                booleanCondIfMap
+                                booleanCondIfMap, leftOutStmts
                             )
                         }
                     }
@@ -272,29 +353,44 @@ private fun findBranches(
 
             if (range.contains(expression.operationSignNode.textRange)) {
                 if (hadToPatch) {
-                    branches.removeAt(statements.size)
+                    if (statements.size <= branches.lastIndex) {
+                        branches.removeAt(statements.size)
+                    } else {
+                        myLogger.warn("More branches found than gcov in expression " + expression.text)
+                    }
                 }
                 if (myDeepest === expression && range.contains(expression.operationSignNode.startOffset) &&
                     (myFirstBoolean?.let { range.contains(it.operationSignNode.startOffset) } == true)
                 ) {
                     val left = expression.left
                     if (left != null) {
-                        addBranchCoverageForExpression(
-                            left,
-                            branches[statements.size],
-                            booleanCondIfMap
-                        )
-                        branches.removeAt(statements.size)
+                        if (statements.size <= branches.lastIndex) {
+                            addBranchCoverageForExpression(
+                                left,
+                                branches[statements.size],
+                                booleanCondIfMap,
+                                leftOutStmts
+                            )
+                            branches.removeAt(statements.size)
+                        } else {
+                            myLogger.warn("More branches found than gcov in expression " + expression.text)
+                        }
                     }
                 }
                 val right = expression.right
                 if (right != null) {
-                    addBranchCoverageForExpression(
-                        right,
-                        branches[statements.size],
-                        booleanCondIfMap
-                    )
-                    branches.removeAt(statements.size)
+                    if (statements.size <= branches.lastIndex) {
+
+                        addBranchCoverageForExpression(
+                            right,
+                            branches[statements.size],
+                            booleanCondIfMap,
+                            leftOutStmts
+                        )
+                        branches.removeAt(statements.size)
+                    } else {
+                        myLogger.warn("More branches found than gcov in expression " + expression.text)
+                    }
                 }
             }
 
@@ -317,7 +413,7 @@ private fun findBranches(
         override fun visitTemplateParameterList(list: OCTemplateParameterListImpl?) {
             return
         }
-    }.visitElement(psiFile)
+    }.visitElement(ocFile)
     return statements
 }
 
@@ -331,7 +427,8 @@ private fun getBranchData(
     }
     return DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageBranchData>> {
         val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return@runReadActionInSmartMode emptyList()
-        val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return@runReadActionInSmartMode emptyList()
+        val psiFile =
+            PsiManager.getInstance(project).findFile(vfs) as? OCFile ?: return@runReadActionInSmartMode emptyList()
         val document =
             PsiDocumentManager.getInstance(project).getDocument(psiFile)
                 ?: return@runReadActionInSmartMode emptyList()
@@ -403,8 +500,8 @@ private fun getBranchData(
                     )
                 }
                 is OCConditionalExpression -> {
-                    val quest = PsiTreeUtil.findSiblingForward(element, OCTokenTypes.QUEST, null)
-                    val offset = quest?.textOffset ?: element.condition.textRange.endOffset
+                    val quest = PsiTreeUtil.findSiblingForward(element.condition, OCTokenTypes.QUEST, null)
+                    val offset = quest?.textRange?.endOffset ?: element.condition.textRange.endOffset
                     val line = document.getLineNumber(offset) + 1
                     list + CoverageBranchData(
                         line toCP offset - document.getLineStartOffset(line - 1) + 1,
@@ -432,8 +529,9 @@ private fun getBranchData(
 }
 
 @Suppress("ConvertCallChainIntoSequence")
-private fun rooToCoverageData(root: Root, env: CPPEnvironment, project: Project) =
-    CoverageData(root.files.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
+private fun rootToCoverageData(root: Root, env: CPPEnvironment, project: Project): CoverageData {
+    val activeCount = 1//Thread.activeCount()
+    return CoverageData(root.files.chunked(ceil(root.files.size / activeCount.toDouble()).toInt()).map {
         ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
             it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
                 CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
@@ -455,6 +553,7 @@ private fun rooToCoverageData(root: Root, env: CPPEnvironment, project: Project)
             }
         }
     }.flatMap { it.get() }.associateBy { it.filePath })
+}
 
 private data class Root(
     @Json(name = "current_working_directory") val currentWorkingDirectory: String,
@@ -496,7 +595,7 @@ private fun processJson(
         override fun fromJson(jv: JsonValue): Any? {
             val array = jv.array ?: return null
             val list = Klaxon().parseFromJsonArray<Branch>(array) ?: return null
-            return list.filter { !it.throwing }.chunked(2).filter { it.size == 2 }
+            return list.chunked(2).filter { branch -> !branch.any { it.throwing } }.filter { it.size == 2 }
                 .map {
                     if (it[0].fallthrough) {
                         it[0].count to it[1].count
@@ -518,7 +617,7 @@ private fun processJson(
         it.get()
     }
 
-    return rooToCoverageData(Root("", "", "", root), env, project)
+    return rootToCoverageData(Root("", "", "", root), env, project)
 }
 
 class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {

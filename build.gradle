@@ -29,7 +29,7 @@ intellij {
     version 'CL-2019.2.3'
 }
 runIde {
-    jvmArgs '-Xmx2G'
+    jvmArgs '-Xmx4G'
 }
 compileKotlin {
     kotlinOptions.jvmTarget = "1.8"
