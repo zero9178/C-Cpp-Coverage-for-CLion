@@ -27,7 +27,7 @@ interface CoverageGenerator {
 }
 
 private fun extractVersion(line: String): Triple<Int, Int, Int> {
-    val result = "\\d+\\.\\d\\.\\d".toRegex().findAll(line).lastOrNull() ?: return Triple(0, 0, 0)
+    val result = "\\d+\\.\\d+\\.\\d+".toRegex().find(line) ?: return Triple(0, 0, 0)
     var value = result.value
     val first = value.substring(0, value.indexOf('.'))
     value = value.removeRange(0, first.length + 1)
