@@ -13,7 +13,7 @@
     -->
 
     <change-notes><![CDATA[
-      2.1.0: Added support for wsl, fixed incompatibility with older LLVM versions, Coverage view now retains sorting and expanded objects after rerun
+      2.1.1: Implemented branch coverage for Boolean expressions for LLVM. Fixed bugs with json incorrectly parsing when warnings appear. Greatly improved LLVM Coverage speed
     ]]></change-notes>
 
     <description><![CDATA[

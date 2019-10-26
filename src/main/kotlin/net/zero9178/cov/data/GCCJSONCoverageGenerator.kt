@@ -434,7 +434,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         } else {
             emptyList()
         } + files
-        val p = environment.hostMachine.runProcess(GeneralCommandLine(command).withRedirectErrorStream(true), null, -1)
+        val p = environment.hostMachine.runProcess(GeneralCommandLine(command), null, -1)
         val lines = p.stdoutLines
         val retCode = p.exitCode
         if (retCode != 0) {

@@ -26,7 +26,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version 'CL-2019.2.1'
+    version 'CL-2019.2.3'
 }
 runIde {
     jvmArgs '-Xmx2G'

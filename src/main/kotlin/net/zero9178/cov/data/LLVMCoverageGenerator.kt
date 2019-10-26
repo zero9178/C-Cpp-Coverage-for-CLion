@@ -505,24 +505,26 @@ class LLVMCoverageGenerator(
 
         files.forEach { it.delete() }
 
-        val llvmCov = environment.hostMachine.createProcess(
-            GeneralCommandLine(
-                listOf(
-                    myLLVMCov,
-                    "export",
-                    "-instr-profile",
-                    "${config.target.name}.profdata",
-                    environment.toEnvPath(config.productFile?.absolutePath ?: "")
-                )
-            ).withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)), false, false
+        val input = listOf(
+            myLLVMCov,
+            "export",
+            "-instr-profile",
+            "${config.target.name}.profdata",
+            environment.toEnvPath(config.productFile?.absolutePath ?: "")
         )
-        lines = llvmCov.process.inputStream.bufferedReader().readLines()
-        retCode = llvmCov.process.waitFor()
+        val llvmCov = environment.hostMachine.runProcess(
+            GeneralCommandLine(input).withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
+            null,
+            -1
+        )
+        lines = llvmCov.stdoutLines
+        retCode = llvmCov.exitCode
         if (retCode != 0) {
+            val errorOutput = llvmCov.stderrLines
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
                 "llvm-cov returned error code $retCode",
                 "Invocation and error output:",
-                "Invocation: ${llvmCov.commandLine}\n Stderr: ${lines.joinToString("\n")}",
+                "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
                 NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)

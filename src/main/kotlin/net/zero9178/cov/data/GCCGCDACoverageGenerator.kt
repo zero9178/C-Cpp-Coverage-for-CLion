@@ -209,7 +209,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                     "-i",
                     "-m"
                 ) + files
-            ).withRedirectErrorStream(true).withWorkDirectory(config.configurationGenerationDir), null, -1
+            ).withWorkDirectory(config.configurationGenerationDir), null, -1
         )
         val lines = p.stdout
         val retCode = p.exitCode
