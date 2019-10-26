@@ -1,7 +1,6 @@
 package net.zero9178.cov.editor
 
 import com.intellij.codeInsight.highlighting.HighlightManager
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.*
 import com.intellij.openapi.editor.colors.CodeInsightColors
@@ -14,6 +13,7 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.util.IconUtil
+import icons.CoverageIcons
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
@@ -66,7 +66,7 @@ class CoverageHighlighter(private val myProject: Project) {
                     ) {
                         val margin = 1
                         val icon = IconUtil.toSize(
-                            if (steppedIn && skipped) AllIcons.Actions.Commit else AllIcons.General.Error,
+                            if (steppedIn && skipped) CoverageIcons.BRANCH_COVERED else CoverageIcons.BRANCH_NOT_COVERED,
                             targetRegion.height - 2 * margin,
                             targetRegion.height - 2 * margin
                         )
