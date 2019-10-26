@@ -23,6 +23,9 @@ import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.impl.OCTemplateParameterListImpl
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
+import com.jetbrains.cidr.lang.symbols.OCResolveContext
+import com.jetbrains.cidr.lang.types.OCIntType
+import com.jetbrains.cidr.lang.types.OCRealType
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.toCP
@@ -111,7 +114,8 @@ private fun hasSideEffects(condition: OCExpression?): Boolean {
         override fun visitUnaryExpression(expression: OCUnaryExpression?) {
             expression ?: return super.visitUnaryExpression(expression)
             when (expression.operationSign) {
-                OCTokenTypes.PLUSPLUS, OCTokenTypes.MINUSMINUS -> result = true
+                OCTokenTypes.PLUSPLUS, OCTokenTypes.MINUSMINUS, OCTokenTypes.DEREF, OCTokenTypes.DEREF_MUL -> result =
+                    true
                 else -> super.visitUnaryExpression(expression)
             }
         }
@@ -125,6 +129,49 @@ private fun hasSideEffects(condition: OCExpression?): Boolean {
         override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {}
     }.visitElement(condition)
     return result
+}
+
+private fun generatesCode(condition: OCExpression): Pair<Boolean, Int> {
+    return when (condition) {
+        is OCReferenceExpression -> false to 0
+        is OCBinaryExpression -> {
+            if (condition.isBooleanExpression()) {
+                condition.right?.let { generatesCode(it) } ?: false to 0
+            } else {
+                !listOf(
+                    OCTokenTypes.LT,
+                    OCTokenTypes.LTEQ,
+                    OCTokenTypes.GT,
+                    OCTokenTypes.GTEQ, OCTokenTypes.EQEQ, OCTokenTypes.EXCLEQ
+                ).contains(condition.operationSign) to condition.operationSignNode.startOffset
+            }
+        }
+        is OCUnaryExpression -> {
+            when {
+                condition.operationSign === OCTokenTypes.EXCL -> {
+                    val resolvedType = condition.resolvedType
+                    if (resolvedType is OCIntType) {
+                        OCIntType.isBool(resolvedType, OCResolveContext.forPsi(condition))
+                    } else {
+                        true
+                    }
+                }
+                condition.operationSign === OCTokenTypes.PLUS -> {
+                    val resolvedType = condition.resolvedType
+                    if (resolvedType is OCIntType) {
+                        resolvedType.getBits(null, null, condition.project) < OCIntType.INT.getBits(
+                            null,
+                            null,
+                            condition.project
+                        )
+                    } else resolvedType !is OCRealType
+                }
+                else -> true
+            } to condition.operationSignNode.startOffset
+        }
+        is OCParenthesizedExpression -> condition.operand?.let { generatesCode(it) } ?: false to 0
+        else -> true to condition.textOffset
+    }
 }
 
 private fun findBranches(
@@ -166,32 +213,37 @@ private fun findBranches(
             super.visitLoopStatement(loop)
         }
 
-        private fun addCond(original: OCElement, condition: OCExpression) {
-            var currentCond: OCExpression? = condition
+        override fun visitIfStatement(stmt: OCIfStatement?) {
+            stmt ?: return super.visitIfStatement(stmt)
+            var currentCond: OCExpression? = stmt.condition?.expression ?: return super.visitIfStatement(stmt)
             while (currentCond is OCParenthesizedExpression) {
                 currentCond = currentCond.operand
             }
-            if (currentCond == null || !currentCond.isBooleanExpression() || original !is OCIfStatement || (ocFile.isCpp && hasSideEffects(
-                    condition
+            if (currentCond != null && currentCond.isBooleanExpression() && (!ocFile.isCpp || !hasSideEffects(
+                    currentCond
                 ))
             ) {
-                statements += original
+                leftOutStmts += stmt
             } else {
-                //If current has boolean expressions the gimplify step removes the if
-                leftOutStmts += original
+                val offset = {
+                    if (currentCond != null) {
+                        val (generatesCode, textOffset) = generatesCode(currentCond)
+                        if (generatesCode) {
+                            textOffset
+                        } else {
+                            stmt.textOffset + 1
+                        }
+                    } else {
+                        stmt.textOffset + 1
+                    }
+                }()
+                visitElement(stmt.condition)
+                if (range.contains(offset) && !((stmt.thenBranch as? OCBlockStatement)?.statements.isNullOrEmpty()
+                            && (stmt.elseBranch as? OCBlockStatement)?.statements.isNullOrEmpty())
+                ) {
+                    statements += stmt
+                }
             }
-        }
-
-        override fun visitIfStatement(stmt: OCIfStatement?) {
-            stmt ?: return super.visitIfStatement(stmt)
-            val offset = stmt.textOffset + 1
-            if (range.contains(offset) && !((stmt.thenBranch as? OCBlockStatement)?.statements.isNullOrEmpty()
-                        && (stmt.elseBranch as? OCBlockStatement)?.statements.isNullOrEmpty())
-            ) {
-                val expression = stmt.condition?.expression ?: return super.visitIfStatement(stmt)
-                addCond(stmt, expression)
-            }
-            super.visitIfStatement(stmt)
         }
 
         override fun visitConditionalExpression(expression: OCConditionalExpression?) {
@@ -199,7 +251,7 @@ private fun findBranches(
             val element = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
                 ?: return super.visitConditionalExpression(expression)
             if (range.contains(element.textOffset)) {
-                addCond(expression, expression.condition)
+                statements += expression
             }
             super.visitConditionalExpression(expression)
         }
@@ -251,7 +303,7 @@ private fun findBranches(
 
 
             Therefore in general operators branches have source locations of its operator to the left except
-            for the very first operand which is at the source location of the whole expression. The source
+            for the very first operand executed in the whole expression which is at the source location of the whole expression. The source
             location of the whole expression is the one of the operator of the highest boolean expression in
             the AST.
 
