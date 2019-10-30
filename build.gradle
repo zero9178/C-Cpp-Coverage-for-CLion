@@ -26,7 +26,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version 'CL-193.4778-EAP-CANDIDATE-SNAPSHOT'
+    version 'CL-193.4932-EAP-CANDIDATE-SNAPSHOT'
 }
 runIde {
     jvmArgs '-Xmx2G'
