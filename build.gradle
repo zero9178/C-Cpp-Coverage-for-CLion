@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'net.zero9178'
-version '2.1.1-EAP'
+version '2.1.2-EAP'
 
 sourceCompatibility = 1.8
 
