@@ -6,6 +6,7 @@ import com.intellij.execution.configurations.RunnerSettings
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.process.ProcessListener
+import com.intellij.execution.runners.ProgramRunner
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
@@ -20,6 +21,7 @@ import com.jetbrains.cidr.execution.CidrBuildTarget
 import com.jetbrains.cidr.execution.CidrRunConfiguration
 import com.jetbrains.cidr.execution.CidrRunConfigurationExtensionBase
 import com.jetbrains.cidr.execution.ConfigurationExtensionContext
+import com.jetbrains.cidr.execution.coverage.CidrCoverageProgramRunner
 import com.jetbrains.cidr.lang.CLanguageKind
 import com.jetbrains.cidr.lang.toolchains.CidrCompilerSwitches
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
@@ -81,7 +83,10 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration) {
+        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
+                runnerId
+            ) is CidrCoverageProgramRunner
+        ) {
             return
         }
         getCoverageGenerator(environment, configuration)?.patchEnvironment(configuration, environment, cmdLine)
@@ -95,7 +100,10 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration) {
+        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
+                runnerId
+            ) is CidrCoverageProgramRunner
+        ) {
             return
         }
         val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget

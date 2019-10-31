@@ -29,7 +29,7 @@ For further details, known issues and differences of compilers see <a href="http
 
     <actions>
         <action class="net.zero9178.cov.actions.CoverageButton" description="Run with Coverage"
-                icon="AllIcons.General.RunWithCoverage">
+                icon="CPPCoverageIcons.COVERAGE_RUN_ACTION">
             <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
             <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
         </action>
