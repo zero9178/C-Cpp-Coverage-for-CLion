@@ -1,11 +1,11 @@
 plugins {
     id 'java'
-    id 'org.jetbrains.intellij' version '0.4.10'
+    id 'org.jetbrains.intellij' version '0.4.11'
     id 'org.jetbrains.kotlin.jvm' version '1.3.31'
 }
 
 group 'net.zero9178'
-version '2.1.2-EAP'
+version '2019.3.0'
 
 sourceCompatibility = 1.8
 
