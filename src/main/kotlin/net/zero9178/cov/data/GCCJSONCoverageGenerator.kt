@@ -346,28 +346,31 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
     @Suppress("ConvertCallChainIntoSequence")
     private fun rooToCoverageData(root: Root, env: CPPEnvironment, project: Project) =
-        CoverageData(root.files.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
-            ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
-                it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
-                    CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
-                        val lines = file.lines.filter {
-                            it.functionName == function.name
-                        }
-                        CoverageFunctionData(
-                            function.startLine,
-                            function.endLine,
-                            function.demangledName,
-                            FunctionLineData(lines.associate { it.lineNumber to it.count }),
-                            findStatementsForBranches(
-                                lines,
-                                env.toLocalPath(file.file),
-                                project
+        CoverageData(
+            root.files.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
+                ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
+                    it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
+                        CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
+                            val lines = file.lines.filter {
+                                it.functionName == function.name
+                            }
+                            CoverageFunctionData(
+                                function.startLine,
+                                function.endLine,
+                                function.demangledName,
+                                FunctionLineData(lines.associate { it.lineNumber to it.count }),
+                                if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
+                                    lines,
+                                    env.toLocalPath(file.file),
+                                    project
+                                ) else emptyList()
                             )
-                        )
-                    }.associateBy { it.functionName })
+                        }.associateBy { it.functionName })
+                    }
                 }
-            }
-        }.flatMap { it.get() }.associateBy { it.filePath })
+            }.flatMap { it.get() }.associateBy { it.filePath },
+            CoverageGeneratorSettings.getInstance().branchCoverageEnabled
+        )
 
     private data class Root(
         @Json(name = "current_working_directory") val currentWorkingDirectory: String,

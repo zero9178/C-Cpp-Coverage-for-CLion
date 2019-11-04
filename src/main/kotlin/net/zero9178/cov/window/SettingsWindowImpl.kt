@@ -33,6 +33,7 @@ class SettingsWindowImpl : SettingsWindow() {
                         myTempToolchainState[renames.value] = value
                     }
                     updateToolChainComboBox()
+                    updateUIAfterItemChange()
                 }
 
                 override fun toolchainCMakeEnvironmentChanged(toolchains: MutableSet<CPPToolchains.Toolchain>) {
@@ -196,13 +197,7 @@ class SettingsWindowImpl : SettingsWindow() {
             myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        if (if (wsl == null) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else !Paths.get(
-                wsl.toLocalPath(
-                    null,
-                    myGcovOrllvmCovBrowser.text
-                )
-            ).exists()
-        ) {
+        if (if (wsl == null) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else false) {
             myErrors.text = "'${myGcovOrllvmCovBrowser.text}' is not a valid path to an executable"
             myErrors.icon = AllIcons.General.Warning
             myLLVMProfLabel.isVisible = false

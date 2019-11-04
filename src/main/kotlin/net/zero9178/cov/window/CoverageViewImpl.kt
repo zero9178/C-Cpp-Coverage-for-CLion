@@ -20,7 +20,6 @@ import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
 import net.zero9178.cov.editor.CoverageHighlighter
-import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.Component
 import java.awt.Graphics
 import java.awt.event.MouseAdapter
@@ -92,7 +91,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
 
     override fun createUIComponents() {
         myTreeTableView =
-            TreeTableView(ListTreeTableModelOnColumns(DefaultMutableTreeNode("empty-root"), getColumnInfo()))
+            TreeTableView(ListTreeTableModelOnColumns(DefaultMutableTreeNode("empty-root"), getColumnInfo(true)))
         myTreeTableView.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
                 e ?: return
@@ -183,19 +182,19 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
     init {
         myClear.addActionListener {
             CoverageHighlighter.getInstance(project).setCoverageData(null)
-            setRoot(null)
+            setRoot(null, false)
         }
         myIncludeNonProjectSources.addActionListener {
             (myTreeTableView.tableModel as DefaultTreeModel).reload()
         }
     }
 
-    override fun setRoot(treeNode: DefaultMutableTreeNode?) {
+    override fun setRoot(treeNode: DefaultMutableTreeNode?, hasBranchCoverage: Boolean) {
         val list = TreeUtil.collectExpandedUserObjects(myTreeTableView.tree).filterIsInstance<CoverageFileData>()
         myTreeTableView.setModel(
             object : ListTreeTableModelOnColumns(
                 treeNode ?: DefaultMutableTreeNode("empty-root"),
-                getColumnInfo()
+                getColumnInfo(hasBranchCoverage)
             ) {
                 override fun getChildCount(parent: Any?): Int {
                     return if (myIncludeNonProjectSources.isSelected || parent == null || parent !is DefaultMutableTreeNode || !parent.isRoot) {
@@ -337,7 +336,7 @@ private class ProgressBarColumn(
     }
 }
 
-private fun getColumnInfo(): Array<ColumnInfo<*, *>> {
+private fun getColumnInfo(hasBranchCoverage: Boolean): Array<ColumnInfo<*, *>> {
 
     val fileInfo = TreeColumnInfo("File/Function")
     val branchInfo = ProgressBarColumn("Branch coverage", {
@@ -351,7 +350,7 @@ private fun getColumnInfo(): Array<ColumnInfo<*, *>> {
         getCurrentLineCoverage(it.userObject)
     }
 
-    return if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+    return if (hasBranchCoverage) {
         arrayOf(fileInfo, branchInfo, lineInfo)
     } else {
         arrayOf(fileInfo, lineInfo)

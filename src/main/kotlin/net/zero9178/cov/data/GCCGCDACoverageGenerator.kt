@@ -186,7 +186,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             }.associateBy { it.functionName })
         }
 
-        return CoverageData(files.associateBy { it.filePath })
+        return CoverageData(files.associateBy { it.filePath }, false)
     }
 
     override fun generateCoverage(

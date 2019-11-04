@@ -136,7 +136,7 @@ class LLVMCoverageGenerator(
                             "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
                 }
             }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
-            ?: return CoverageData(emptyMap())
+            ?: return CoverageData(emptyMap(), false)
         log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
 
         val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
@@ -248,7 +248,7 @@ class LLVMCoverageGenerator(
                         }
                     }.flatMap { it.get() }.associateBy { it.functionName })
             }
-        }.associateBy { it.filePath })
+        }.associateBy { it.filePath }, CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
     }
 
     private fun demangle(
