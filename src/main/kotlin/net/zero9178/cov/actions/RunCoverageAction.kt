@@ -32,7 +32,7 @@ class CoverageButton : AnAction() {
         }
         e.presentation.isEnabled = settings.type.id.startsWith("CMake")
 
-        e.presentation.text = "Run '${settings.name}' with Coverage"
+        e.presentation.text = "Run '${settings.name}' with coverage"
     }
 
     override fun actionPerformed(anActionEvent: AnActionEvent) {

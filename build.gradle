@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'net.zero9178'
-version '2.1.2-EAP'
+version '2.1.1'
 
 sourceCompatibility = 1.8
 
@@ -26,7 +26,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version 'CL-193.4932-EAP-CANDIDATE-SNAPSHOT'
+    version 'CL-2019.2.3'
 }
 runIde {
     jvmArgs '-Xmx2G'
@@ -38,5 +38,5 @@ compileTestKotlin {
     kotlinOptions.jvmTarget = "1.8"
 }
 patchPluginXml {
-    version project.version
+    version "2.1.1"
 }

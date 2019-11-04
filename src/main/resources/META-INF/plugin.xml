@@ -13,8 +13,7 @@
     -->
 
     <change-notes><![CDATA[
-      2.1.2: Clearly Separated Plugin functionality from Built-In CLion functionality and stopped it from interfering
-       with CLions Coverage Runners. Also added C++ Logo to the Coverage Run Action to not have two of the same Logos
+      2.1.1: Implemented branch coverage for Boolean expressions for LLVM. Fixed bugs with json incorrectly parsing when warnings appear. Greatly improved LLVM Coverage speed
     ]]></change-notes>
 
     <description><![CDATA[
@@ -30,7 +29,7 @@ For further details, known issues and differences of compilers see <a href="http
 
     <actions>
         <action class="net.zero9178.cov.actions.CoverageButton" description="Run with Coverage"
-                icon="CPPCoverageIcons.COVERAGE_RUN_ACTION">
+                icon="AllIcons.General.RunWithCoverage">
             <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
             <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
         </action>
