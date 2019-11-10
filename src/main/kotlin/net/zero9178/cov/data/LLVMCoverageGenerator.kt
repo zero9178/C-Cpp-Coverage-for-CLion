@@ -7,7 +7,6 @@ import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -28,6 +27,7 @@ import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
+import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
@@ -157,7 +157,7 @@ class LLVMCoverageGenerator(
                         file.filename,
                         emptyList()
                     ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                        ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFunctionData>> {
+                        CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
                             val segments = file.segments.toMutableList()
                             functions.fold(emptyList()) { result, function ->
 

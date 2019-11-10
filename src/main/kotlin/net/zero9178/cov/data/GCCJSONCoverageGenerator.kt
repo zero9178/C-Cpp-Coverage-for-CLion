@@ -31,6 +31,7 @@ import java.io.StringReader
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Paths
+import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
@@ -405,9 +406,9 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     ): CoverageData {
 
         val root = jsonContents.map {
-            ApplicationManager.getApplication().executeOnPooledThread<List<File>> {
+            CompletableFuture.supplyAsync<List<File>> {
                 val root = Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)
-                    ?: return@executeOnPooledThread null
+                    ?: return@supplyAsync emptyList()
                 val cwd = root.currentWorkingDirectory.replace(
                     '\n',
                     '\\'
