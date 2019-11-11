@@ -382,7 +382,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     }
                 }
             }.flatMap { it.get() }.associateBy { it.filePath },
-            CoverageGeneratorSettings.getInstance().branchCoverageEnabled
+            CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
+            CoverageGeneratorSettings.getInstance().calculateExternalSources
         )
     }
 

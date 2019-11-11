@@ -27,5 +27,5 @@ public abstract class CoverageView {
 
     protected abstract void createUIComponents();
 
-    public abstract void setRoot(@Nullable DefaultMutableTreeNode treeNode, boolean hasBranchCoverage);
+    public abstract void setRoot(@Nullable DefaultMutableTreeNode treeNode, boolean hasBranchCoverage, boolean hasExternalSources);
 }

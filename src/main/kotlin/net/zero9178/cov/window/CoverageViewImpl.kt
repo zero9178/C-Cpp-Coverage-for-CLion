@@ -20,6 +20,7 @@ import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
 import net.zero9178.cov.editor.CoverageHighlighter
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.Component
 import java.awt.Graphics
 import java.awt.event.MouseAdapter
@@ -182,14 +183,18 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
     init {
         myClear.addActionListener {
             CoverageHighlighter.getInstance(project).setCoverageData(null)
-            setRoot(null, false)
+            setRoot(
+                null,
+                CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
+                CoverageGeneratorSettings.getInstance().calculateExternalSources
+            )
         }
         myIncludeNonProjectSources.addActionListener {
             (myTreeTableView.tableModel as DefaultTreeModel).reload()
         }
     }
 
-    override fun setRoot(treeNode: DefaultMutableTreeNode?, hasBranchCoverage: Boolean) {
+    override fun setRoot(treeNode: DefaultMutableTreeNode?, hasBranchCoverage: Boolean, hasExternalSources: Boolean) {
         val list = TreeUtil.collectExpandedUserObjects(myTreeTableView.tree).filterIsInstance<CoverageFileData>()
         myTreeTableView.setModel(
             object : ListTreeTableModelOnColumns(
@@ -257,6 +262,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
             }
             myTreeTableView.updateUI()
         }
+        myIncludeNonProjectSources.isVisible = hasExternalSources
     }
 }
 

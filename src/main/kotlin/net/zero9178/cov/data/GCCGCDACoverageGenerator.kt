@@ -14,6 +14,7 @@ import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import net.zero9178.cov.notification.CoverageNotification
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.math.ceil
@@ -186,7 +187,11 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             }.associateBy { it.functionName })
         }
 
-        return CoverageData(files.associateBy { it.filePath }, false)
+        return CoverageData(
+            files.associateBy { it.filePath },
+            false,
+            CoverageGeneratorSettings.getInstance().calculateExternalSources
+        )
     }
 
     override fun generateCoverage(
