@@ -35,7 +35,8 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
         var conditionalExpBranchCoverageEnabled: Boolean = true,
         var booleanOpBranchCoverageEnabled: Boolean = false,
         var branchCoverageEnabled: Boolean = true,
-        var useCoverageAction: Boolean = false
+        var useCoverageAction: Boolean = false,
+        var calculateExternalSources: Boolean = false
     )
 
     private var myState: State = State()
@@ -86,6 +87,12 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
         get() = myState.useCoverageAction
         set(value) {
             myState.useCoverageAction = value
+        }
+
+    var calculateExternalSources: Boolean
+        get() = myState.calculateExternalSources
+        set(value) {
+            myState.calculateExternalSources = value
         }
 
     fun getGeneratorFor(toolchain: String) = myGenerators[toolchain]
