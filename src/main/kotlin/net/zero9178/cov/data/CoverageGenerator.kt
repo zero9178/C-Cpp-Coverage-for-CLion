@@ -45,7 +45,7 @@ fun getGeneratorFor(
     if (executable.isBlank()) {
         return null to "No executable specified"
     }
-    if (!Paths.get(if (wsl == null) executable else wsl.toLocalPath(null, executable)).exists()) {
+    if (if (wsl == null) !Paths.get(executable).exists() else false) {
         return null to "Executable does not exist"
     }
     val p = ProcessBuilder(
