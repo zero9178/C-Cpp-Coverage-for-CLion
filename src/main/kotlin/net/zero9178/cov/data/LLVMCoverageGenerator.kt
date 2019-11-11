@@ -159,7 +159,7 @@ class LLVMCoverageGenerator(
             data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
 
                 val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
-                if (sources?.any {
+                if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && sources?.any {
                         it.path == filePath
                     } == false) {
                     return@fileFold result
