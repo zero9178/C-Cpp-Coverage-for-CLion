@@ -169,6 +169,7 @@ class SettingsWindowImpl : SettingsWindow() {
         myBooleanOpBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
         myUseRunner.isSelected = CoverageGeneratorSettings.getInstance().useCoverageAction
         myDoBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().branchCoverageEnabled
+        myCalculateExternal.isSelected = CoverageGeneratorSettings.getInstance().calculateExternalSources
     }
 
     private fun updateToolChainComboBox() {
@@ -242,6 +243,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 || myBooleanOpBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
                 || myDoBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().branchCoverageEnabled
                 || myUseRunner.isSelected != CoverageGeneratorSettings.getInstance().useCoverageAction
+                || myCalculateExternal.isSelected != CoverageGeneratorSettings.getInstance().calculateExternalSources
 
     override fun getDisplayName() = "C/C++ Coverage"
 
@@ -254,5 +256,6 @@ class SettingsWindowImpl : SettingsWindow() {
         CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled = myBooleanOpBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().useCoverageAction = myUseRunner.isSelected
         CoverageGeneratorSettings.getInstance().branchCoverageEnabled = myDoBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().calculateExternalSources = myCalculateExternal.isSelected
     }
 }

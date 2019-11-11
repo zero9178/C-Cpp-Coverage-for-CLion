@@ -12,6 +12,7 @@ import com.intellij.notification.Notifications
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
@@ -29,6 +30,7 @@ import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Paths
 import kotlin.math.ceil
 
@@ -345,9 +347,20 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     }
 
     @Suppress("ConvertCallChainIntoSequence")
-    private fun rooToCoverageData(root: Root, env: CPPEnvironment, project: Project) =
-        CoverageData(
-            root.files.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
+    private fun rootToCoverageData(root: Root, env: CPPEnvironment, project: Project): CoverageData {
+        val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
+            ModuleRootManager.getInstance(module).contentEntries.flatMap {
+                it.sourceFolderFiles.toList()
+            }
+        }
+        return CoverageData(
+            root.files.filter { file ->
+            CoverageGeneratorSettings.getInstance().calculateExternalSources || sources?.any {
+                it.path == env.toLocalPath(
+                    file.file
+                ).replace('\\', '/')
+            } == true
+        }.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
                 ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
                     it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
                         CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
@@ -371,6 +384,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             }.flatMap { it.get() }.associateBy { it.filePath },
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled
         )
+    }
 
     private data class Root(
         @Json(name = "current_working_directory") val currentWorkingDirectory: String,
@@ -405,13 +419,27 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
         val root = jsonContents.map {
             ApplicationManager.getApplication().executeOnPooledThread<List<File>> {
-                Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)?.files
+                val root = Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)
+                    ?: return@executeOnPooledThread null
+                val cwd = root.currentWorkingDirectory.replace(
+                    '\n',
+                    '\\'
+                )//For some reason gcov uses \n instead of \\ on Windows?!
+                root.files.map {
+                    File(
+                        if (Paths.get(it.file).isAbsolute) it.file else Paths.get(cwd).resolve(it.file).toRealPath(
+                            LinkOption.NOFOLLOW_LINKS
+                        ).toString(),
+                        it.functions,
+                        it.lines
+                    )
+                }
             }
         }.flatMap {
             it.get()
         }
 
-        return rooToCoverageData(Root("", "", "", root), env, project)
+        return rootToCoverageData(Root("", "", "", root), env, project)
     }
 
     override fun generateCoverage(

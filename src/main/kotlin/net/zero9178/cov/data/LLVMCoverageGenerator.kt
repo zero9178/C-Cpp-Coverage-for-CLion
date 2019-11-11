@@ -11,6 +11,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
@@ -142,6 +143,12 @@ class LLVMCoverageGenerator(
         val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
         val demangledNames = demangle(environment, mangledNames)
 
+        val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
+            ModuleRootManager.getInstance(module).contentEntries.flatMap {
+                it.sourceFolderFiles.toList()
+            }
+        }
+
         return CoverageData(root.data.flatMap { data ->
             //Associates the filename with a list of all functions in that file
             val funcMap =
@@ -149,10 +156,17 @@ class LLVMCoverageGenerator(
                     it.second
                 }
 
-            data.files.map { file ->
+            data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
+
+                val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
+                if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && sources?.any {
+                        it.path == filePath
+                    } == false) {
+                    return@fileFold result
+                }
                 val activeCount = Thread.activeCount()
-                CoverageFileData(
-                    environment.toLocalPath(file.filename).replace('\\', '/'),
+                result + CoverageFileData(
+                    filePath,
                     funcMap.getOrDefault(
                         file.filename,
                         emptyList()
