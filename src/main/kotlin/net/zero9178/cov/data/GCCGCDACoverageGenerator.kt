@@ -8,12 +8,12 @@ import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import net.zero9178.cov.notification.CoverageNotification
+import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
@@ -187,7 +187,11 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             }.associateBy { it.functionName })
         }
 
-        return CoverageData(files.associateBy { it.filePath }, false)
+        return CoverageData(
+            files.associateBy { it.filePath },
+            false,
+            CoverageGeneratorSettings.getInstance().calculateExternalSources
+        )
     }
 
     override fun generateCoverage(

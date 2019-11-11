@@ -137,7 +137,7 @@ class LLVMCoverageGenerator(
                             "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
                 }
             }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
-            ?: return CoverageData(emptyMap(), false)
+            ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
         log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
 
         val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
@@ -149,138 +149,142 @@ class LLVMCoverageGenerator(
             }
         }
 
-        return CoverageData(root.data.flatMap { data ->
-            //Associates the filename with a list of all functions in that file
-            val funcMap =
-                data.functions.flatMap { func -> func.filenames.map { it to func } }.groupBy({ it.first }) {
-                    it.second
-                }
+        return CoverageData(
+            root.data.flatMap { data ->
+                //Associates the filename with a list of all functions in that file
+                val funcMap =
+                    data.functions.flatMap { func -> func.filenames.map { it to func } }.groupBy({ it.first }) {
+                        it.second
+                    }
 
-            data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
+                data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
 
-                val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
-                if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && sources?.any {
-                        it.path == filePath
-                    } == false) {
-                    return@fileFold result
-                }
-                val activeCount = Thread.activeCount()
-                result + CoverageFileData(
-                    filePath,
-                    funcMap.getOrDefault(
-                        file.filename,
-                        emptyList()
-                    ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                        CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
-                            val segments = file.segments.toMutableList()
-                            functions.fold(emptyList()) { result, function ->
+                    val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
+                    if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && sources?.any {
+                            it.path == filePath
+                        } == false) {
+                        return@fileFold result
+                    }
+                    val activeCount = Thread.activeCount()
+                    result + CoverageFileData(
+                        filePath,
+                        funcMap.getOrDefault(
+                            file.filename,
+                            emptyList()
+                        ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
+                            CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
+                                val segments = file.segments.toMutableList()
+                                functions.fold(emptyList()) { result, function ->
 
-                                val filter =
-                                    function.regions.firstOrNull { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
-                                        ?: return@fold result
-                                val funcStart = segments.binarySearchBy(filter.start) {
-                                    it.pos
-                                }
-                                if (funcStart < 0) {
-                                    val insertionPoint = -funcStart + 1
-                                    log.warn(
-                                        "Function start ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
-                                            insertionPoint
-                                        )},${segments.getOrNull(insertionPoint + 1)}"
-                                    )
-                                    return@fold result
-                                }
-                                val gapsPos =
-                                    function.regions.filter { it.regionKind == Region.GAP && function.filenames[it.fileId] == file.filename }
-                                        .map { it.start }.toHashSet()
-                                val branches = mutableListOf<Region>()
-                                val funcEnd = segments.binarySearchBy(
-                                    filter.end,
-                                    funcStart
-                                ) {
-                                    it.pos
-                                }
-                                if (funcEnd < 0) {
-                                    val insertionPoint = -funcEnd + 1
-                                    log.warn(
-                                        "Function end ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
-                                            insertionPoint
-                                        )},${segments.getOrNull(insertionPoint + 1)}"
-                                    )
-                                    return@fold result
-                                }
-
-                                val window = segments.slice(
-                                    funcStart..funcEnd
-                                ).windowed(2) { (first, second) ->
-                                    val new = Region(first.pos, second.pos, first.count, 0, 0, Region.CODE)
-                                    if (first.isRegionEntry) {
-                                        branches += new
+                                    val filter =
+                                        function.regions.firstOrNull { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
+                                            ?: return@fold result
+                                    val funcStart = segments.binarySearchBy(filter.start) {
+                                        it.pos
                                     }
-                                    new
-                                }
-                                val nonGaps = mutableListOf<Region>()
-                                val regions =
-                                    window.mapIndexed { index, region ->
-                                        if (!gapsPos.contains(region.start)) {
-                                            nonGaps += region
-                                            region
-                                        } else {
-                                            //I could leave out the gaps but this makes it look kinda ugly and harder to
-                                            //look at IMO. Might introduce a setting later on for those that want Gaps
-                                            //to be, well, gaps but for now am just gonna keep it like that making it
-                                            //look identical to when it used to work with regions
-                                            val count =
-                                                (if (index == 0) 0L else window[index - 1].executionCount) + if (index + 1 > window.lastIndex) 0L else window[index + 1].executionCount
-                                            Region(
-                                                region.start,
-                                                region.end,
-                                                count,
-                                                region.fileId,
-                                                region.expandedFileId,
-                                                Region.GAP
-                                            )
+                                    if (funcStart < 0) {
+                                        val insertionPoint = -funcStart + 1
+                                        log.warn(
+                                            "Function start ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
+                                                insertionPoint
+                                            )},${segments.getOrNull(insertionPoint + 1)}"
+                                        )
+                                        return@fold result
+                                    }
+                                    val gapsPos =
+                                        function.regions.filter { it.regionKind == Region.GAP && function.filenames[it.fileId] == file.filename }
+                                            .map { it.start }.toHashSet()
+                                    val branches = mutableListOf<Region>()
+                                    val funcEnd = segments.binarySearchBy(
+                                        filter.end,
+                                        funcStart
+                                    ) {
+                                        it.pos
+                                    }
+                                    if (funcEnd < 0) {
+                                        val insertionPoint = -funcEnd + 1
+                                        log.warn(
+                                            "Function end ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
+                                                insertionPoint
+                                            )},${segments.getOrNull(insertionPoint + 1)}"
+                                        )
+                                        return@fold result
+                                    }
+
+                                    val window = segments.slice(
+                                        funcStart..funcEnd
+                                    ).windowed(2) { (first, second) ->
+                                        val new = Region(first.pos, second.pos, first.count, 0, 0, Region.CODE)
+                                        if (first.isRegionEntry) {
+                                            branches += new
                                         }
+                                        new
+                                    }
+                                    val nonGaps = mutableListOf<Region>()
+                                    val regions =
+                                        window.mapIndexed { index, region ->
+                                            if (!gapsPos.contains(region.start)) {
+                                                nonGaps += region
+                                                region
+                                            } else {
+                                                //I could leave out the gaps but this makes it look kinda ugly and harder to
+                                                //look at IMO. Might introduce a setting later on for those that want Gaps
+                                                //to be, well, gaps but for now am just gonna keep it like that making it
+                                                //look identical to when it used to work with regions
+                                                val count =
+                                                    (if (index == 0) 0L else window[index - 1].executionCount) + if (index + 1 > window.lastIndex) 0L else window[index + 1].executionCount
+                                                Region(
+                                                    region.start,
+                                                    region.end,
+                                                    count,
+                                                    region.fileId,
+                                                    region.expandedFileId,
+                                                    Region.GAP
+                                                )
+                                            }
+                                        }
+
+                                    if (funcEnd > funcStart && segments.size <= funcEnd + 1) {
+                                        segments.subList(funcStart, funcEnd + 1).clear()
                                     }
 
-                                if (funcEnd > funcStart && segments.size <= funcEnd + 1) {
-                                    segments.subList(funcStart, funcEnd + 1).clear()
-                                }
-
-                                if (regions.isEmpty()) {
-                                    result
-                                } else {
-                                    result + CoverageFunctionData(
-                                        regions.first().start.first,
-                                        regions.first().end.first,
-                                        demangledNames[function.name] ?: function.name,
-                                        FunctionRegionData(regions.map { region ->
-                                            FunctionRegionData.Region(
-                                                region.start,
-                                                region.end,
-                                                region.executionCount,
-                                                when (region.regionKind) {
-                                                    Region.GAP -> FunctionRegionData.Region.Kind.Gap
-                                                    Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
-                                                    Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
-                                                    else -> FunctionRegionData.Region.Kind.Code
-                                                }
-                                            )
-                                        }),
-                                        if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
-                                            regions.first().start.first to regions.last().end.first,
-                                            branches,
-                                            nonGaps,
-                                            environment.toLocalPath(file.filename),
-                                            project
-                                        ) else emptyList()
-                                    )
+                                    if (regions.isEmpty()) {
+                                        result
+                                    } else {
+                                        result + CoverageFunctionData(
+                                            regions.first().start.first,
+                                            regions.first().end.first,
+                                            demangledNames[function.name] ?: function.name,
+                                            FunctionRegionData(regions.map { region ->
+                                                FunctionRegionData.Region(
+                                                    region.start,
+                                                    region.end,
+                                                    region.executionCount,
+                                                    when (region.regionKind) {
+                                                        Region.GAP -> FunctionRegionData.Region.Kind.Gap
+                                                        Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                                                        Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                                                        else -> FunctionRegionData.Region.Kind.Code
+                                                    }
+                                                )
+                                            }),
+                                            if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
+                                                regions.first().start.first to regions.last().end.first,
+                                                branches,
+                                                nonGaps,
+                                                environment.toLocalPath(file.filename),
+                                                project
+                                            ) else emptyList()
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    }.flatMap { it.get() }.associateBy { it.functionName })
-            }
-        }.associateBy { it.filePath }, CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
+                        }.flatMap { it.get() }.associateBy { it.functionName })
+                }
+            }.associateBy { it.filePath },
+            CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
+            CoverageGeneratorSettings.getInstance().calculateExternalSources
+        )
     }
 
     private fun demangle(
