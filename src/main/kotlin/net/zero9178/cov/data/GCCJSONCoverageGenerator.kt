@@ -9,7 +9,7 @@ import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
@@ -35,6 +35,10 @@ import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
+
+    companion object {
+        val log = Logger.getInstance(GCCJSONCoverageGenerator::class.java)
+    }
 
     private fun findStatementsForBranches(
         lines: List<Line>,
@@ -350,7 +354,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     private fun rootToCoverageData(root: Root, env: CPPEnvironment, project: Project) =
         CoverageData(
             root.files.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
-                ApplicationManager.getApplication().executeOnPooledThread<List<CoverageFileData>> {
+                CompletableFuture.supplyAsync {
                     it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
                         CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
                             val lines = file.lines.filter {

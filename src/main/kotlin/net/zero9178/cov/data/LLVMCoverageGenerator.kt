@@ -167,6 +167,15 @@ class LLVMCoverageGenerator(
                                 val funcStart = segments.binarySearchBy(filter.start) {
                                     it.pos
                                 }
+                                if (funcStart < 0) {
+                                    val insertionPoint = -funcStart + 1
+                                    log.warn(
+                                        "Function start ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
+                                            insertionPoint
+                                        )},${segments.getOrNull(insertionPoint + 1)}"
+                                    )
+                                    return@fold result
+                                }
                                 val gapsPos =
                                     function.regions.filter { it.regionKind == Region.GAP && function.filenames[it.fileId] == file.filename }
                                         .map { it.start }.toHashSet()
@@ -176,6 +185,15 @@ class LLVMCoverageGenerator(
                                     funcStart
                                 ) {
                                     it.pos
+                                }
+                                if (funcEnd < 0) {
+                                    val insertionPoint = -funcEnd + 1
+                                    log.warn(
+                                        "Function end ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
+                                            insertionPoint
+                                        )},${segments.getOrNull(insertionPoint + 1)}"
+                                    )
+                                    return@fold result
                                 }
 
                                 val window = segments.slice(
