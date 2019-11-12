@@ -13,8 +13,13 @@
     -->
 
     <change-notes><![CDATA[
-      2.1.2: Clearly Separated Plugin functionality from Built-In CLion functionality and stopped it from interfering
-       with CLions Coverage Runners. Also added C++ Logo to the Coverage Run Action to not have two of the same Logos
+            2019.3.0: <br/>
+      Changed naming scheme. First two Fields match CLion version plugin is ment for and last field is incremented per release<br/>
+      Branch coverage column does not show anymore if branch coverage was not generated when running<br/>
+      Fixed Bug with GCC 9 Coverage not working with Ninja Generator<br/>
+      Switched from Intellij Threadpool to creating Threads yielding better performance in 2019.3<br/>
+      New option to choose if Coverage should be calculated for sources not part of the project (default: Off)<br/>
+      Bug fixes with WSL sometimes not working fixed as well as branch coverage for Lambdas when using LLVM
     ]]></change-notes>
 
     <description><![CDATA[
