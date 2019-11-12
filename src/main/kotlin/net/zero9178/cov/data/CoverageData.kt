@@ -3,7 +3,11 @@ package net.zero9178.cov.data
 import net.zero9178.cov.util.ComparablePair
 
 //All line and column numbers in the file start with 1 and 1
-data class CoverageData(val files: Map<String, CoverageFileData>)
+data class CoverageData(
+    val files: Map<String, CoverageFileData>,
+    val hasBranchCoverage: Boolean,
+    val containsExternalSources: Boolean
+)
 
 data class CoverageFileData(val filePath: String, val functions: Map<String, CoverageFunctionData>)
 

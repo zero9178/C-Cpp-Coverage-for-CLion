@@ -143,7 +143,12 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                             }
                             CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
                             ApplicationManager.getApplication().invokeLater {
-                                CoverageView.getInstance(configuration.project).setRoot(root)
+                                CoverageView.getInstance(configuration.project)
+                                    .setRoot(
+                                        root,
+                                        data?.hasBranchCoverage ?: true,
+                                        data?.containsExternalSources ?: false
+                                    )
                                 ToolWindowManager.getInstance(configuration.project).getToolWindow("C/C++ Coverage")
                                     ?.show(null)
                             }

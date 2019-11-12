@@ -1,11 +1,11 @@
 plugins {
     id 'java'
-    id 'org.jetbrains.intellij' version '0.4.10'
+    id 'org.jetbrains.intellij' version '0.4.12'
     id 'org.jetbrains.kotlin.jvm' version '1.3.31'
 }
 
 group 'net.zero9178'
-version '2.1.1'
+version '2019.2.0'
 
 sourceCompatibility = 1.8
 
@@ -26,7 +26,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version 'CL-2019.2.3'
+    version 'CL-2019.2.4'
 }
 runIde {
     jvmArgs '-Xmx2G'
@@ -38,5 +38,5 @@ compileTestKotlin {
     kotlinOptions.jvmTarget = "1.8"
 }
 patchPluginXml {
-    version "2.1.1"
+    version project.version
 }

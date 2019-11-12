@@ -33,6 +33,7 @@ class SettingsWindowImpl : SettingsWindow() {
                         myTempToolchainState[renames.value] = value
                     }
                     updateToolChainComboBox()
+                    updateUIAfterItemChange()
                 }
 
                 override fun toolchainCMakeEnvironmentChanged(toolchains: MutableSet<CPPToolchains.Toolchain>) {
@@ -168,6 +169,7 @@ class SettingsWindowImpl : SettingsWindow() {
         myBooleanOpBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
         myUseRunner.isSelected = CoverageGeneratorSettings.getInstance().useCoverageAction
         myDoBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().branchCoverageEnabled
+        myCalculateExternal.isSelected = CoverageGeneratorSettings.getInstance().calculateExternalSources
     }
 
     private fun updateToolChainComboBox() {
@@ -196,13 +198,7 @@ class SettingsWindowImpl : SettingsWindow() {
             myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        if (if (wsl == null) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else !Paths.get(
-                wsl.toLocalPath(
-                    null,
-                    myGcovOrllvmCovBrowser.text
-                )
-            ).exists()
-        ) {
+        if (if (wsl == null) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else false) {
             myErrors.text = "'${myGcovOrllvmCovBrowser.text}' is not a valid path to an executable"
             myErrors.icon = AllIcons.General.Warning
             myLLVMProfLabel.isVisible = false
@@ -247,6 +243,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 || myBooleanOpBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
                 || myDoBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().branchCoverageEnabled
                 || myUseRunner.isSelected != CoverageGeneratorSettings.getInstance().useCoverageAction
+                || myCalculateExternal.isSelected != CoverageGeneratorSettings.getInstance().calculateExternalSources
 
     override fun getDisplayName() = "C/C++ Coverage"
 
@@ -259,5 +256,6 @@ class SettingsWindowImpl : SettingsWindow() {
         CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled = myBooleanOpBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().useCoverageAction = myUseRunner.isSelected
         CoverageGeneratorSettings.getInstance().branchCoverageEnabled = myDoBranchCoverage.isSelected
+        CoverageGeneratorSettings.getInstance().calculateExternalSources = myCalculateExternal.isSelected
     }
 }
