@@ -166,6 +166,7 @@ class LLVMCoverageGenerator(
                         return@fileFold result
                     }
                     val activeCount = Thread.activeCount()
+                    val segments = file.segments.filter { it.isRegionEntry }
                     result + CoverageFileData(
                         filePath,
                         funcMap.getOrDefault(
@@ -173,73 +174,30 @@ class LLVMCoverageGenerator(
                             emptyList()
                         ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
                             CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
-                                val segments = file.segments.toMutableList()
                                 functions.fold(emptyList()) { result, function ->
 
-                                    val filter =
-                                        function.regions.firstOrNull { it.regionKind != Region.GAP && function.filenames[it.fileId] == file.filename }
-                                            ?: return@fold result
-                                    val funcStart = segments.binarySearchBy(filter.start) {
-                                        it.pos
-                                    }
-                                    if (funcStart < 0) {
-                                        val insertionPoint = -funcStart + 1
-                                        log.warn(
-                                            "Function start ${function.name} could not be found in segments. Searched pos: ${filter.start}. Nearest Indices: ${segments.getOrNull(
-                                                insertionPoint
-                                            )},${segments.getOrNull(insertionPoint + 1)}"
-                                        )
-                                        return@fold result
-                                    }
-                                    val gapsPos =
-                                        function.regions.filter { it.regionKind == Region.GAP && function.filenames[it.fileId] == file.filename }
-                                            .map { it.start }.toHashSet()
-                                    val branches = mutableListOf<Region>()
-                                    var funcEnd = segments.binarySearchBy(
-                                        filter.end,
-                                        funcStart
-                                    ) {
-                                        it.pos
-                                    }
-                                    if (funcEnd < 0) {
-                                        funcEnd = -funcEnd - 2
-                                    }
-
-                                    val window = segments.slice(
-                                        funcStart..funcEnd
-                                    ).windowed(2) { (first, second) ->
-                                        val new = Region(first.pos, second.pos, first.count, 0, 0, Region.CODE)
-                                        if (first.isRegionEntry) {
-                                            branches += new
-                                        }
-                                        new
-                                    }
-                                    val nonGaps = mutableListOf<Region>()
-                                    val regions =
-                                        window.mapIndexed { index, region ->
-                                            if (!gapsPos.contains(region.start)) {
-                                                nonGaps += region
-                                                region
-                                            } else {
-                                                //I could leave out the gaps but this makes it look kinda ugly and harder to
-                                                //look at IMO. Might introduce a setting later on for those that want Gaps
-                                                //to be, well, gaps but for now am just gonna keep it like that making it
-                                                //look identical to when it used to work with regions
-                                                val count =
-                                                    (if (index == 0) 0L else window[index - 1].executionCount) + if (index + 1 > window.lastIndex) 0L else window[index + 1].executionCount
-                                                Region(
-                                                    region.start,
-                                                    region.end,
-                                                    count,
-                                                    region.fileId,
-                                                    region.expandedFileId,
-                                                    Region.GAP
-                                                )
+                                    val regions = function.regions.filter {
+                                        function.filenames[it.fileId] == file.filename
+                                    }.sortedWith(Comparator { lhs, rhs ->
+                                        when {
+                                            lhs.start != rhs.start -> {
+                                                lhs.start.compareTo(rhs.start)
+                                            }
+                                            lhs.end != rhs.end -> {
+                                                rhs.end.compareTo(lhs.end)
+                                            }
+                                            else -> {
+                                                lhs.regionKind.compareTo(rhs.regionKind)
                                             }
                                         }
-
-                                    if (funcEnd > funcStart && segments.size <= funcEnd + 1) {
-                                        segments.subList(funcStart, funcEnd + 1).clear()
+                                    })
+                                    val nonGaps = regions.filter {
+                                        it.regionKind != Region.GAP
+                                    }
+                                    val branches = nonGaps.filter { region ->
+                                        segments.binarySearchBy(region.start) {
+                                            it.pos
+                                        } >= 0
                                     }
 
                                     if (regions.isEmpty()) {
@@ -357,7 +315,7 @@ class LLVMCoverageGenerator(
                         return super.visitIfStatement(stmt)
                     }
                     val body = stmt.thenBranch ?: return super.visitIfStatement(stmt)
-                    match(stmt, body)
+                    stmt.condition?.let { match(it, body) }
                     super.visitIfStatement(stmt)
                 }
 
