@@ -8,7 +8,6 @@ import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
@@ -17,6 +16,7 @@ import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVersion: Int) :
@@ -126,7 +126,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         }
 
         val result = lines.chunked(ceil(lines.size.toDouble() / Thread.activeCount()).toInt()).map {
-            ApplicationManager.getApplication().executeOnPooledThread<List<Item>> {
+            CompletableFuture.supplyAsync {
                 it.flatMap { gcovFile ->
                     try {
                         val ast = if (myMajorVersion == 8) {

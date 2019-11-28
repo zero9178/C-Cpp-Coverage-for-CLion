@@ -13,9 +13,11 @@
     -->
 
     <change-notes><![CDATA[
-      2019.2.0: <br/>
+            2019.3.0: <br/>
       Changed naming scheme. First two Fields match CLion version plugin is ment for and last field is incremented per release<br/>
       Branch coverage column does not show anymore if branch coverage was not generated when running<br/>
+      Fixed Bug with GCC 9 Coverage not working with Ninja Generator<br/>
+      Switched from Intellij Threadpool to creating Threads yielding better performance in 2019.3<br/>
       New option to choose if Coverage should be calculated for sources not part of the project (default: Off)<br/>
       Bug fixes with WSL sometimes not working fixed as well as branch coverage for Lambdas when using LLVM
     ]]></change-notes>
@@ -33,7 +35,7 @@ For further details, known issues and differences of compilers see <a href="http
 
     <actions>
         <action class="net.zero9178.cov.actions.CoverageButton" description="Run with Coverage"
-                icon="AllIcons.General.RunWithCoverage">
+                icon="CPPCoverageIcons.COVERAGE_RUN_ACTION">
             <add-to-group group-id="ToolbarRunGroup" relative-to-action="Stop" anchor="before"/>
             <add-to-group group-id="RunMenu" relative-to-action="ChooseRunConfiguration" anchor="before"/>
         </action>
