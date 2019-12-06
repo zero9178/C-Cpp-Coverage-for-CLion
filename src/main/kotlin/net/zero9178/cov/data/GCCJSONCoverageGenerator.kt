@@ -25,6 +25,7 @@ import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
+import com.jetbrains.cidr.system.RemoteUtil
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.toCP
@@ -360,12 +361,12 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         }
         return CoverageData(
             root.files.filter { file ->
-            CoverageGeneratorSettings.getInstance().calculateExternalSources || sources?.any {
-                it.path == env.toLocalPath(
-                    file.file
-                ).replace('\\', '/')
-            } == true
-        }.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
+                CoverageGeneratorSettings.getInstance().calculateExternalSources || sources?.any {
+                    it.path == env.toLocalPath(
+                        file.file
+                    ).replace('\\', '/')
+                } == true
+            }.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
                 CompletableFuture.supplyAsync {
                     it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
                         CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
@@ -431,11 +432,25 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     '\n',
                     '\\'
                 )//For some reason gcov uses \n instead of \\ on Windows?!
+                val remoteCredentials = env.toolchain.remoteCredentials
                 root.files.map {
                     File(
-                        if (Paths.get(it.file).isAbsolute) it.file else Paths.get(cwd).resolve(it.file).toRealPath(
-                            LinkOption.NOFOLLOW_LINKS
-                        ).toString(),
+                        if (!env.hostMachine.isRemote) {
+                            if (Paths.get(it.file).isAbsolute) it.file else Paths.get(cwd).resolve(
+                                it.file
+                            ).toRealPath(
+                                LinkOption.NOFOLLOW_LINKS
+                            ).toString()
+                        } else if (remoteCredentials == null) {
+                            it.file
+                        } else {
+                            //Best way to check for absolute path AFAIK atm
+                            if (RemoteUtil.fileExists(remoteCredentials, it.file)) {
+                                it.file
+                            } else {
+                                env.hostMachine.toCanonicalPath(cwd + '/' + it.file, false)
+                            }
+                        },
                         it.functions,
                         it.lines
                     )
@@ -456,10 +471,17 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return null
+
+        val hostMachine = environment.hostMachine
+        val remotePath = hostMachine.getPath(config.configurationGenerationDir.absolutePath)
+        val dir = hostMachine.resolvePath(remotePath)
         val files =
-            config.configurationGenerationDir.walkTopDown().filter {
+            dir.walkTopDown().filter {
                 it.isFile && it.name.endsWith(".gcda")
-            }.map { environment.toEnvPath(it.absolutePath) }.filterNotNull().toList()
+            }.map {
+                val relativeTo = it.relativeTo(dir)
+                environment.toEnvPath(relativeTo.toString())
+            }.filterNotNull().toList()
 
         val command = listOf(
             myGcov,
@@ -473,10 +495,9 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         } + files
         val p = environment.hostMachine.runProcess(GeneralCommandLine(command), null, -1)
         val lines = p.stdoutLines
-        val retCode = p.exitCode
-        if (retCode != 0) {
+        if (p.exitCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "gcov returned error code $retCode",
+                "gcov returned error code ${p.exitCode}",
                 "Invocation and error output:",
                 "Invocation: ${command.joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
                 NotificationType.ERROR
@@ -485,7 +506,16 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             return null
         }
 
-        files.forEach { Files.deleteIfExists(Paths.get(environment.toLocalPath(it))) }
+        val remoteCredentials = environment.toolchain.remoteCredentials
+        files.forEach {
+            if (hostMachine.isRemote) {
+                if (remoteCredentials != null) {
+                    RemoteUtil.rm(remoteCredentials, environment.toEnvPath(dir.resolve(it).toString()))
+                }
+            } else {
+                Files.deleteIfExists(dir.resolve(it).toPath())
+            }
+        }
 
         return processJson(lines, environment, configuration.project)
     }

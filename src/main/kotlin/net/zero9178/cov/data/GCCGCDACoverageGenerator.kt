@@ -12,10 +12,10 @@ import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.system.RemoteUtil
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
-import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
@@ -43,6 +43,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         project: Project,
         env: CPPEnvironment
     ): CoverageData? {
+        if (lines.isEmpty()) {
+            return null
+        }
 
         abstract class GCovCommonGrammar : Grammar<List<Item>>() {
 
@@ -202,40 +205,55 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return null
-        val files =
-            config.configurationGenerationDir.walkTopDown().filter {
-                it.isFile && it.name.endsWith(".gcda")
-            }.map { environment.toEnvPath(it.absolutePath) }.toList()
 
-        val p = environment.hostMachine.runProcess(
+        val hostMachine = environment.hostMachine
+        val remotePath = hostMachine.getPath(config.configurationGenerationDir.absolutePath)
+        var dir = hostMachine.resolvePath(remotePath)
+        val files =
+            dir.walkTopDown().filter {
+                it.isFile && it.name.endsWith(".gcda")
+            }.map {
+                val relativeTo = it.relativeTo(dir)
+                environment.toEnvPath(relativeTo.toString())
+            }.toList()
+
+        val p = hostMachine.runProcess(
             GeneralCommandLine(
                 listOf(
                     myGcov,
                     "-i",
                     "-m"
                 ) + files
-            ).withWorkDirectory(config.configurationGenerationDir), null, -1
+            ).withRedirectErrorStream(true).withWorkDirectory(config.configurationGenerationDir), null, -1
         )
-        val lines = p.stdout
-        val retCode = p.exitCode
-        if (retCode != 0) {
+        if (p.exitCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "gcov returned error code $retCode",
+                "gcov returned error code ${p.exitCode}",
                 "Invocation and error output:",
                 "Invocation: ${(listOf(
                     myGcov,
                     "-i",
                     "-m"
-                ) + files).joinToString(" ")}\n Stderr: ${lines}",
+                ) + files).joinToString(" ")}\n Stderr: ${p.stdout}",
                 NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)
             return null
         }
 
-        files.forEach { Files.deleteIfExists(Paths.get(environment.toLocalPath(it))) }
+        val remoteCredentials = environment.toolchain.remoteCredentials
+        files.forEach {
+            if (hostMachine.isRemote) {
+                if (remoteCredentials != null) {
+                    RemoteUtil.rm(remoteCredentials, environment.toEnvPath(dir.resolve(it).toString()))
+                }
+            } else {
+                Files.deleteIfExists(dir.resolve(it).toPath())
+            }
+        }
 
-        val filter = config.configurationGenerationDir.listFiles()?.filter {
+        dir = hostMachine.resolvePath(remotePath)
+        val filter = dir.listFiles()?.filter {
             it.isFile && it.name.endsWith(".gcov")
         }?.toList() ?: emptyList()
 
@@ -243,7 +261,15 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             it.readLines()
         }
 
-        filter.forEach { it.delete() }
+        filter.forEach {
+            if (hostMachine.isRemote) {
+                if (remoteCredentials != null) {
+                    RemoteUtil.rm(remoteCredentials, environment.toEnvPath(it.toString()))
+                }
+            } else {
+                it.delete()
+            }
+        }
 
         return parseGcovIR(output, configuration.project, environment)
     }

@@ -6,9 +6,9 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.ui.TextBrowseFolderListener
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.io.exists
+import com.jetbrains.cidr.cpp.toolchains.CPPToolSet
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener
-import com.jetbrains.cidr.cpp.toolchains.WSL
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
@@ -79,7 +79,7 @@ class SettingsWindowImpl : SettingsWindow() {
                     val info = myTempToolchainState[selectedItem]
                     if (info != null) {
                         info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
-                        updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
+                        updateLLVMFields(toolchainIsRemote(selectedItem))
                     }
                 }
             }
@@ -90,7 +90,7 @@ class SettingsWindowImpl : SettingsWindow() {
                 val info = myTempToolchainState[selectedItem]
                 if (info != null) {
                     info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
-                    updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
+                    updateLLVMFields(toolchainIsRemote(selectedItem))
                 }
             }
         })
@@ -178,16 +178,20 @@ class SettingsWindowImpl : SettingsWindow() {
 
     private fun updateUIAfterItemChange() {
         val toolchainName = myComboBox.selectedItem as? String ?: return
-        val wsl = CPPToolchains.getInstance().toolchains.find {
-            it.name == toolchainName
-        }?.wsl
+        val isRemote = toolchainIsRemote(toolchainName)
         myGcovOrllvmCovBrowser.text = myTempToolchainState[toolchainName]?.gcovOrllvmCovPath ?: ""
         myLLVMProfdataBrowser.text = myTempToolchainState[toolchainName]?.llvmProfDataPath ?: ""
         myDemanglerBrowser.text = myTempToolchainState[toolchainName]?.demangler ?: ""
-        updateLLVMFields(wsl)
+        updateLLVMFields(isRemote)
     }
 
-    private fun updateLLVMFields(wsl: WSL?) {
+    private fun toolchainIsRemote(toolchainName: String): Boolean {
+        return CPPToolchains.getInstance().toolchains.find {
+            it.name == toolchainName
+        }?.let { it.toolSetKind == CPPToolSet.Kind.WSL || it.toolSetKind == CPPToolSet.Kind.REMOTE } ?: false
+    }
+
+    private fun updateLLVMFields(isRemote: Boolean) {
         if (myGcovOrllvmCovBrowser.text.isBlank()) {
             myErrors.text = "No executable specified"
             myErrors.icon = AllIcons.General.Warning
@@ -198,7 +202,7 @@ class SettingsWindowImpl : SettingsWindow() {
             myGcovOrLLVMCovLabel.text = "gcov or llvm-cov:"
             return
         }
-        if (if (wsl == null) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else false) {
+        if (if (!isRemote) !Paths.get(myGcovOrllvmCovBrowser.text).exists() else false) {
             myErrors.text = "'${myGcovOrllvmCovBrowser.text}' is not a valid path to an executable"
             myErrors.icon = AllIcons.General.Warning
             myLLVMProfLabel.isVisible = false

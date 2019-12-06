@@ -1,10 +1,7 @@
 package net.zero9178.cov.settings
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.components.RoamingType
-import com.intellij.openapi.components.State
-import com.intellij.openapi.components.Storage
+import com.intellij.openapi.components.*
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.*
 import com.jetbrains.cidr.toolchains.OSType
@@ -100,14 +97,9 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     override fun getState() = myState
 
     override fun loadState(state: State) {
-        val paths = myState.paths
+        val compilers = CPPToolchains.getInstance().toolchains.associate { it.name to GeneratorInfo() }.toMutableMap()
         myState = state
-        myState.paths.forEach {
-            if (paths.contains(it.key)) {
-                paths[it.key] = it.value
-            }
-        }
-        myState.paths = paths
+        myState.paths = compilers.apply { putAll(myState.paths) }
         ensurePopulatedPaths()
     }
 
@@ -133,12 +125,17 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     }
 
     private fun generateGeneratorFor(name: String, info: GeneratorInfo) {
-        myGenerators[name] = getGeneratorFor(
+        val toolchain = CPPToolchains.getInstance().toolchains.find { it.name == name } ?: return
+        getGeneratorFor(
             info.gcovOrllvmCovPath,
             info.llvmProfDataPath,
             info.demangler,
-            CPPToolchains.getInstance().toolchains.find { it.name == name }?.wsl
-        )
+            toolchain
+        ).thenAccept {
+            ApplicationManager.getApplication().invokeLater {
+                myGenerators[name] = it
+            }
+        }
     }
 
     init {
@@ -176,11 +173,10 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
                     }
                 }
             })
-        ensurePopulatedPaths()
     }
 
     companion object {
-        fun getInstance() = ApplicationManager.getApplication().getComponent(CoverageGeneratorSettings::class.java)!!
+        fun getInstance() = ServiceManager.getService(CoverageGeneratorSettings::class.java)!!
     }
 }
 

@@ -23,11 +23,13 @@ import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
+import com.jetbrains.cidr.system.RemoteUtil
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
+import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
@@ -508,24 +510,26 @@ class LLVMCoverageGenerator(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return null
 
-        val files = config.configurationGenerationDir.listFiles()
+        val hostMachine = environment.hostMachine
+        val remotePath = hostMachine.getPath(config.configurationGenerationDir.absolutePath)
+        val dir = hostMachine.resolvePath(remotePath)
+        val files = dir.listFiles()
             ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
 
-        val p = environment.hostMachine.createProcess(
+        val p = environment.hostMachine.runProcess(
             GeneralCommandLine(listOf(
                 myLLVMProf,
                 "merge",
                 "-output=${config.target.name}.profdata"
             ) + files.map { environment.toEnvPath(it.absolutePath) })
-                .withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
-            false,
-            false
+                .withWorkDirectory(config.configurationGenerationDir),
+            null,
+            -1
         )
-        var retCode = p.process.waitFor()
-        var lines = p.process.errorStream.bufferedReader().readLines()
+        var retCode = p.exitCode
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-profdata returned error code $retCode with error output:\n${lines.joinToString(
+                "llvm-profdata returned error code $retCode with error output:\n${p.stderrLines.joinToString(
                     "\n"
                 )}", NotificationType.ERROR
             )
@@ -533,7 +537,16 @@ class LLVMCoverageGenerator(
             return null
         }
 
-        files.forEach { it.delete() }
+        val remoteCredentials = environment.toolchain.remoteCredentials
+        files.forEach {
+            if (hostMachine.isRemote) {
+                if (remoteCredentials != null) {
+                    RemoteUtil.rm(remoteCredentials, environment.toEnvPath(dir.resolve(it).toString()))
+                }
+            } else {
+                Files.deleteIfExists(dir.resolve(it).toPath())
+            }
+        }
 
         val input = listOf(
             myLLVMCov,
@@ -543,11 +556,11 @@ class LLVMCoverageGenerator(
             environment.toEnvPath(config.productFile?.absolutePath ?: "")
         )
         val llvmCov = environment.hostMachine.runProcess(
-            GeneralCommandLine(input).withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
+            GeneralCommandLine(input).withWorkDirectory(config.configurationGenerationDir),
             null,
             -1
         )
-        lines = llvmCov.stdoutLines
+        val lines = llvmCov.stdoutLines
         retCode = llvmCov.exitCode
         if (retCode != 0) {
             val errorOutput = llvmCov.stderrLines

@@ -41,12 +41,6 @@ For further details, known issues and differences of compilers see <a href="http
         </action>
     </actions>
 
-    <application-components>
-        <component>
-            <implementation-class>net.zero9178.cov.settings.CoverageGeneratorSettings</implementation-class>
-        </component>
-    </application-components>
-
     <project-components>
         <component>
             <interface-class>net.zero9178.cov.window.CoverageView</interface-class>
@@ -62,6 +56,7 @@ For further details, known issues and differences of compilers see <a href="http
                                  groupId="language"/>
         <toolWindow id="C/C++ Coverage" anchor="right" factoryClass="net.zero9178.cov.window.CoverageWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowCoverage"/>
+        <applicationService serviceImplementation="net.zero9178.cov.settings.CoverageGeneratorSettings"/>
         <!-- Add your extensions here -->
     </extensions>
 
