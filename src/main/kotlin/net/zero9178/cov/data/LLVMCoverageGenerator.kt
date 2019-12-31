@@ -15,12 +15,12 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiManager
+import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
-import com.jetbrains.cidr.lang.psi.OCBinaryExpression
-import com.jetbrains.cidr.lang.psi.OCConditionalExpression
-import com.jetbrains.cidr.lang.psi.OCIfStatement
+import com.jetbrains.cidr.lang.parser.OCTokenTypes
+import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
@@ -165,7 +165,6 @@ class LLVMCoverageGenerator(
                         return@fileFold result
                     }
                     val activeCount = Thread.activeCount()
-                    val segments = file.segments.filter { it.isRegionEntry }
                     result + CoverageFileData(
                         filePath,
                         funcMap.getOrDefault(
@@ -183,7 +182,7 @@ class LLVMCoverageGenerator(
                                                 lhs.start.compareTo(rhs.start)
                                             }
                                             lhs.end != rhs.end -> {
-                                                rhs.end.compareTo(lhs.end)
+                                                lhs.end.compareTo(rhs.end)
                                             }
                                             else -> {
                                                 lhs.regionKind.compareTo(rhs.regionKind)
@@ -192,11 +191,6 @@ class LLVMCoverageGenerator(
                                     })
                                     val nonGaps = regions.filter {
                                         it.regionKind != Region.GAP
-                                    }
-                                    val branches = nonGaps.filter { region ->
-                                        segments.binarySearchBy(region.start) {
-                                            it.pos
-                                        } >= 0
                                     }
 
                                     if (regions.isEmpty()) {
@@ -220,9 +214,8 @@ class LLVMCoverageGenerator(
                                                 )
                                             }),
                                             if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
-                                                regions.first().start.first to regions.last().end.first,
-                                                branches,
-                                                nonGaps,
+                                                regions.first().start, regions.last().end,
+                                                nonGaps.toMutableList(),
                                                 environment.toLocalPath(file.filename),
                                                 project
                                             ) else emptyList()
@@ -274,13 +267,13 @@ class LLVMCoverageGenerator(
     }
 
     private fun findStatementsForBranches(
-        functionPos: Pair<Int, Int>,
-        regionEntries: List<Region>,
-        allRegions: List<Region>,
+        functionStart: ComparablePair<Int, Int>,
+        functionEnd: ComparablePair<Int, Int>,
+        regions: MutableList<Region>,
         file: String,
         project: Project
     ): List<CoverageBranchData> {
-        if (regionEntries.isEmpty()) {
+        if (regions.isEmpty()) {
             return emptyList()
         }
         return DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageBranchData>> {
@@ -290,156 +283,135 @@ class LLVMCoverageGenerator(
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
 
-            data class BranchStatementInfo(
-                val bodyRegion: Region,
-                val conditionalRegion: Region,
-                val displayOffset: Int
+            val range = TextRange(
+                document.getLineStartOffset(functionStart.first - 1) + functionStart.second - 1,
+                document.getLineStartOffset(functionEnd.first - 1) + functionEnd.second - 1
             )
 
-            val branches = mutableListOf<BranchStatementInfo>()
+            val branches = mutableListOf<CoverageBranchData>()
 
             object : OCRecursiveVisitor(
-                TextRange(
-                    document.getLineStartOffset(functionPos.first - 1),
-                    document.getLineEndOffset(functionPos.second - 1)
-                )
+                range
             ) {
                 override fun visitIfStatement(stmt: OCIfStatement?) {
-                    stmt ?: return super.visitIfStatement(stmt)
-                    if (!CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled) {
-                        return super.visitIfStatement(stmt)
+                    stmt ?: return
+                    stmt.initStatement?.accept(this)
+                    stmt.condition?.accept(this)
+                    try {
+                        if (!CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled || !range.contains(stmt.textRange)) {
+                            return
+                        }
+                        val expression = stmt.condition?.expression ?: return
+                        val body = stmt.thenBranch ?: return
+                        matchCondThen(stmt.lParenth?.startOffset ?: stmt.textOffset, expression, body)
+                    } finally {
+                        stmt.thenBranch?.accept(this)
+                        stmt.elseBranch?.accept(this)
                     }
-                    val body = stmt.thenBranch ?: return super.visitIfStatement(stmt)
-
-                    super.visitIfStatement(stmt)
                 }
 
                 override fun visitConditionalExpression(expression: OCConditionalExpression?) {
                     expression ?: return super.visitConditionalExpression(expression)
-                    if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled) {
+                    if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled || !range.contains(
+                            expression.textRange
+                        )
+                    ) {
                         return super.visitConditionalExpression(expression)
                     }
-                    val con = expression.condition
                     val pos =
                         expression.getPositiveExpression(false) ?: return super.visitConditionalExpression(expression)
-
+                    val neg = expression.negativeExpression ?: return super.visitConditionalExpression(expression)
+                    val quest = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
+                        ?: return super.visitConditionalExpression(expression)
+                    matchThenElse(quest.textOffset, pos, neg, false)
                     super.visitConditionalExpression(expression)
                 }
 
                 override fun visitBinaryExpression(expression: OCBinaryExpression?) {
                     expression ?: return super.visitBinaryExpression(expression)
-                    if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled) {
+                    if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled || !range.contains(
+                            expression.textRange
+                        )
+                    ) {
                         return super.visitBinaryExpression(expression)
                     }
                     when (expression.operationSignNode.text) {
                         "||", "or", "&&", "and" -> {
                             val left = expression.left ?: return
                             val right = expression.right ?: return
-
+                            matchCondThen(expression.operationSignNode.startOffset, left, right, false)
                         }
                     }
                     super.visitBinaryExpression(expression)
                 }
 
-            }.visitElement(psiFile)
+                override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {
+                    lambdaExpression ?: return super.visitLambdaExpression(lambdaExpression)
+                    //We only want to step into the lambda expression if that is the current function that branch coverage
+                    // is being gathered for. When that is the case range will be equal to the body of the lambda.
+                    // as the lambda is bigger than its body however we can say that we should only visit it
+                    // if it's not fully contained in the range
+                    if (!range.contains(lambdaExpression.textRange)) {
+                        super.visitLambdaExpression(lambdaExpression)
+                    }
+                }
 
-            branches.fold(emptyList()) { list, info ->
-                list
-//                val (above, after) = {
-//                    val startLine = document.getLineNumber(element.textOffset) + 1
-//                    val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-//                    val startPos = startLine toCP startColumn
-//
-//                    val aboveIndex = allRegions.binarySearch {
-//                        when {
-//                            startPos < it.start -> 1
-//                            startPos > it.end -> -1
-//                            else -> 0
-//                        }
-//                    }
-//                    val aboveItem = allRegions.getOrNull(aboveIndex)
-//                    (if (aboveItem == null || startPos !in aboveItem.start..aboveItem.end)
-//                        null
-//                    else allRegions[aboveIndex]) to
-//                            {
-//                                //As after is only needed for loops we implement it with lazy calculation
-//                                val endLine = document.getLineNumber(element.textRange.endOffset) + 1
-//                                val endColumn =
-//                                    element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
-//                                val endPos = endLine toCP endColumn
-//                                val afterIndex =
-//                                    allRegions.binarySearch {
-//                                        when {
-//                                            endPos < it.start -> 1
-//                                            endPos > it.end -> -1
-//                                            else -> 0
-//                                        }
-//                                    }
-//                                val afterItem = allRegions.getOrNull(afterIndex)
-//                                (if (afterItem == null || endPos !in afterItem.start..afterItem.end)
-//                                    null
-//                                else allRegions[afterIndex])
-//                            }
-//                }()
-//
-//                if (above == null) {
-//                    list
-//                } else {
-//
-//                    fun findSiblingForward(
-//                        element: PsiElement,
-//                        vararg elementTypes: IElementType
-//                    ): PsiElement? {
-//                        var e: PsiElement? = element.nextSibling
-//                        while (e != null) {
-//                            if (elementTypes.contains(e.node.elementType)) {
-//                                return e
-//                            }
-//                            e = e.nextSibling
-//                        }
-//                        return null
-//                    }
-//
-//                    val startLine = when (element) {
-//                        is OCLoopStatement -> document.getLineNumber(
-//                            element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
-//                        ) + 1
-//                        is OCIfStatement -> document.getLineNumber(
-//                            element.lParenth?.textRange?.endOffset ?: element.firstChild.textRange.endOffset
-//                        ) + 1
-//                        is OCExpression -> document.getLineNumber(
-//                            findSiblingForward(
-//                                element,
-//                                OCTokenTypes.ANDAND,
-//                                OCTokenTypes.OROR,
-//                                OCTokenTypes.QUEST
-//                            )?.textRange?.endOffset ?: element.lastChild.textRange.endOffset
-//                        ) + 1
-//                        else -> document.getLineNumber(element.firstChild.textRange.endOffset) + 1
-//                    }
-//
-//                    val startColumn = when (element) {
-//                        is OCLoopStatement -> (element.lParenth?.textRange?.startOffset
-//                            ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
-//                        is OCIfStatement -> (element.lParenth?.textRange?.startOffset
-//                            ?: element.firstChild.textRange.startOffset) - document.getLineStartOffset(startLine - 1) + 1
-//                        is OCExpression -> (findSiblingForward(
-//                            element,
-//                            OCTokenTypes.ANDAND,
-//                            OCTokenTypes.OROR,
-//                            OCTokenTypes.QUEST
-//                        )?.textRange?.endOffset
-//                            ?: element.lastChild.textRange.endOffset) - document.getLineStartOffset(startLine - 1) + 1
-//                        else -> element.firstChild.textRange.startOffset - document.getLineStartOffset(startLine - 1) + 1
-//                    }
-//
-//                    list + CoverageBranchData(
-//                        startLine toCP startColumn, region.executionCount.toInt(),
-//                        (if (above.executionCount >= region.executionCount) above.executionCount - region.executionCount
-//                        else after()?.executionCount ?: 1).toInt()
-//                    )
-//                }
-            }
+                private fun find(element: OCElement, removeRegions: Boolean): Region? {
+                    val startLine = document.getLineNumber(element.textOffset) + 1
+                    val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
+                    val startPos = startLine toCP startColumn
+                    val endLine = document.getLineNumber(element.textRange.endOffset) + 1
+                    val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
+                    val endPos = endLine toCP endColumn
+                    val conIndex = regions.indexOfFirst {
+                        it.start == startPos && it.end == endPos
+                    }
+                    if (conIndex < 0) {
+                        //log.warn("Could not find Region that starts at $startPos to $endPos")
+                        return null
+                    }
+                    val result = regions[conIndex]
+                    if (removeRegions) {
+                        regions.removeAll(regions.slice(0..conIndex))
+                    }
+                    return result
+                }
+
+                private fun matchCondThen(
+                    offset: Int,
+                    condition: OCElement,
+                    body: OCElement,
+                    removeRegions: Boolean = true
+                ) {
+                    val conRegion = find(condition, removeRegions) ?: return
+                    val bodyRegion = find(body, removeRegions) ?: return
+
+                    val lineNumber = document.getLineNumber(offset)
+                    branches += CoverageBranchData(
+                        lineNumber + 1 toCP offset - document.getLineStartOffset(lineNumber) + 1,
+                        bodyRegion.executionCount.toInt(),
+                        (conRegion.executionCount - bodyRegion.executionCount).toInt()
+                    )
+                }
+
+                private fun matchThenElse(
+                    offset: Int,
+                    thenBranch: OCElement,
+                    elseBranch: OCElement,
+                    removeRegions: Boolean = true
+                ) {
+                    val thenRegion = find(thenBranch, removeRegions) ?: return
+                    val elseRegion = find(elseBranch, removeRegions) ?: return
+
+                    val lineNumber = document.getLineNumber(offset)
+                    branches += CoverageBranchData(
+                        lineNumber + 1 toCP offset - document.getLineStartOffset(lineNumber) + 1,
+                        thenRegion.executionCount.toInt(),
+                        elseRegion.executionCount.toInt()
+                    )
+                }
+            }.visitElement(psiFile)
+            branches
         }
     }
 
