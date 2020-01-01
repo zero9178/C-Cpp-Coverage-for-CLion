@@ -1,10 +1,8 @@
 package net.zero9178.cov.settings
 
+import com.intellij.ide.AppLifecycleListener
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.components.RoamingType
-import com.intellij.openapi.components.State
-import com.intellij.openapi.components.Storage
+import com.intellij.openapi.components.*
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.*
 import com.jetbrains.cidr.toolchains.OSType
@@ -180,7 +178,13 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     }
 
     companion object {
-        fun getInstance() = ApplicationManager.getApplication().getComponent(CoverageGeneratorSettings::class.java)!!
+        fun getInstance() = ServiceManager.getService(CoverageGeneratorSettings::class.java)!!
+    }
+
+    class Registrar : AppLifecycleListener {
+        override fun appFrameCreated(commandLineArgs: MutableList<String>) {
+            getInstance()
+        }
     }
 }
 

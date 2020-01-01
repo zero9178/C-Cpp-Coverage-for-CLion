@@ -3,6 +3,7 @@ package net.zero9178.cov.editor
 import com.intellij.codeInsight.highlighting.HighlightManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.ServiceManager
 import com.intellij.openapi.editor.*
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColorsUtil
@@ -155,6 +156,6 @@ class CoverageHighlighter(private val myProject: Project) {
     }
 
     companion object {
-        fun getInstance(project: Project) = project.getComponent(CoverageHighlighter::class.java)!!
+        fun getInstance(project: Project) = ServiceManager.getService(project, CoverageHighlighter::class.java)!!
     }
 }

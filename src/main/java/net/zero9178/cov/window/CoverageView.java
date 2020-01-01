@@ -1,5 +1,6 @@
 package net.zero9178.cov.window;
 
+import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.dualView.TreeTableView;
@@ -18,9 +19,10 @@ public abstract class CoverageView {
 
     @NotNull
     public static CoverageView getInstance(@NotNull Project project) {
-        return project.getComponent(CoverageView.class);
+        return ServiceManager.getService(project, CoverageView.class);
     }
 
+    @NotNull
     public JPanel getPanel() {
         return myPanel;
     }

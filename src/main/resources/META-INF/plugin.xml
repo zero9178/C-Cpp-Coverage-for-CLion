@@ -4,7 +4,7 @@
     <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
-    <idea-version since-build="173.0"/>
+    <idea-version since-build="193.0"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
@@ -41,23 +41,16 @@ For further details, known issues and differences of compilers see <a href="http
         </action>
     </actions>
 
-    <application-components>
-        <component>
-            <implementation-class>net.zero9178.cov.settings.CoverageGeneratorSettings</implementation-class>
-        </component>
-    </application-components>
-
-    <project-components>
-        <component>
-            <interface-class>net.zero9178.cov.window.CoverageView</interface-class>
-            <implementation-class>net.zero9178.cov.window.CoverageViewImpl</implementation-class>
-        </component>
-        <component>
-            <implementation-class>net.zero9178.cov.editor.CoverageHighlighter</implementation-class>
-        </component>
-    </project-components>
+    <applicationListeners>
+        <listener class="net.zero9178.cov.settings.CoverageGeneratorSettings$Registrar"
+                  topic="com.intellij.ide.AppLifecycleListener"/>
+    </applicationListeners>
 
     <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="net.zero9178.cov.editor.CoverageHighlighter"/>
+        <projectService serviceImplementation="net.zero9178.cov.window.CoverageViewImpl"
+                        serviceInterface="net.zero9178.cov.window.CoverageView"/>
+        <applicationService serviceImplementation="net.zero9178.cov.settings.CoverageGeneratorSettings"/>
         <applicationConfigurable instance="net.zero9178.cov.window.SettingsWindowImpl" displayName="C/C++ Coverage"
                                  groupId="language"/>
         <toolWindow id="C/C++ Coverage" anchor="right" factoryClass="net.zero9178.cov.window.CoverageWindowFactory"
