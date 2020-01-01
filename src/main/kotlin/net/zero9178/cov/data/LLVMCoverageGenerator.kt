@@ -14,14 +14,16 @@ import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
+import com.intellij.psi.PsiRecursiveVisitor
 import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
-import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
+import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
 import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
@@ -59,14 +61,14 @@ class LLVMCoverageGenerator(
 
     private data class Data(val files: List<File>, val functions: List<Function>)
 
-    private data class File(val filename: String, val segments: List<Segment>)
+    private data class File(val filename: String/*, val segments: List<Segment>*/)
 
-    private data class Segment(
-        val pos: ComparablePair<Int, Int>,
-        val count: Long,
-        val hasCount: Boolean,
-        val isRegionEntry: Boolean
-    )
+//    private data class Segment(
+//        val pos: ComparablePair<Int, Int>,
+//        val count: Long,
+//        val hasCount: Boolean,
+//        val isRegionEntry: Boolean
+//    )
 
     private data class Function(
         val name: String,
@@ -95,7 +97,7 @@ class LLVMCoverageGenerator(
     ): CoverageData {
         val jsonStart = System.nanoTime()
         val root = Klaxon()
-            .converter(object : Converter {
+            /*.converter(object : Converter {
                 override fun canConvert(cls: Class<*>) = cls == Segment::class.java
 
                 override fun fromJson(jv: JsonValue): Any? {
@@ -113,7 +115,7 @@ class LLVMCoverageGenerator(
                     val segment = value as? Segment ?: return ""
                     return "[${segment.pos.first},${segment.pos.second},${segment.count},${segment.hasCount},${segment.isRegionEntry}]"
                 }
-            }).converter(object : Converter {
+            })*/.converter(object : Converter {
                 override fun canConvert(cls: Class<*>) = cls == Region::class.java
 
                 override fun fromJson(jv: JsonValue): Any? {
@@ -290,15 +292,29 @@ class LLVMCoverageGenerator(
 
             val branches = mutableListOf<CoverageBranchData>()
 
-            object : OCRecursiveVisitor(
-                range
-            ) {
+            object : OCVisitor(), PsiRecursiveVisitor {
+                override fun visitElement(element: PsiElement?) {
+                    super.visitElement(element)
+                    element ?: return
+
+                    var curr: PsiElement? = element.firstChild
+                    while (curr != null) {
+                        val textRange = curr.textRange
+                        if (range.contains(textRange)) {
+                            curr.accept(this)
+                        } else if (range.intersects(textRange)) {
+                            visitElement(curr)
+                        }
+                        curr = curr.nextSibling
+                    }
+                }
+
                 override fun visitIfStatement(stmt: OCIfStatement?) {
                     stmt ?: return
                     stmt.initStatement?.accept(this)
                     stmt.condition?.accept(this)
                     try {
-                        if (!CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled || !range.contains(stmt.textRange)) {
+                        if (!CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled) {
                             return
                         }
                         val expression = stmt.condition?.expression ?: return
@@ -312,10 +328,7 @@ class LLVMCoverageGenerator(
 
                 override fun visitConditionalExpression(expression: OCConditionalExpression?) {
                     expression ?: return super.visitConditionalExpression(expression)
-                    if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled || !range.contains(
-                            expression.textRange
-                        )
-                    ) {
+                    if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled) {
                         return super.visitConditionalExpression(expression)
                     }
                     val pos =
@@ -329,10 +342,7 @@ class LLVMCoverageGenerator(
 
                 override fun visitBinaryExpression(expression: OCBinaryExpression?) {
                     expression ?: return super.visitBinaryExpression(expression)
-                    if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled || !range.contains(
-                            expression.textRange
-                        )
-                    ) {
+                    if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled) {
                         return super.visitBinaryExpression(expression)
                     }
                     when (expression.operationSignNode.text) {
@@ -346,14 +356,7 @@ class LLVMCoverageGenerator(
                 }
 
                 override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {
-                    lambdaExpression ?: return super.visitLambdaExpression(lambdaExpression)
-                    //We only want to step into the lambda expression if that is the current function that branch coverage
-                    // is being gathered for. When that is the case range will be equal to the body of the lambda.
-                    // as the lambda is bigger than its body however we can say that we should only visit it
-                    // if it's not fully contained in the range
-                    if (!range.contains(lambdaExpression.textRange)) {
-                        super.visitLambdaExpression(lambdaExpression)
-                    }
+                    return
                 }
 
                 private fun find(element: OCElement, removeRegions: Boolean): Region? {
