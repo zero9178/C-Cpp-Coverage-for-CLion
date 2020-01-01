@@ -357,9 +357,10 @@ private class ProgressBarColumn(
 private fun getColumnInfo(hasBranchCoverage: Boolean): Array<ColumnInfo<*, *>> {
 
     val fileInfo = TreeColumnInfo("File/Function")
-    val branchInfo = ProgressBarColumn("Branch coverage", {
-        when (val userObject = it.userObject) {
+    val branchInfo = ProgressBarColumn("Branch coverage", { treeNode ->
+        when (val userObject = treeNode.userObject) {
             is CoverageFunctionData -> if (userObject.branches.isEmpty()) 0 else 100
+            is CoverageFileData -> if (userObject.functions.values.all { it.branches.isEmpty() }) 0 else 100
             else -> 100
         }
     }) {
