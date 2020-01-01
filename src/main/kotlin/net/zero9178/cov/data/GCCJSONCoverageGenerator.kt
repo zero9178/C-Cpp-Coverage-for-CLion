@@ -1,14 +1,12 @@
 package net.zero9178.cov.data
 
-import com.beust.klaxon.Json
-import com.beust.klaxon.JsonObject
-import com.beust.klaxon.Klaxon
-import com.beust.klaxon.Parser
+import com.beust.klaxon.*
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -29,6 +27,7 @@ import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
+import java.nio.charset.Charset
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Paths
@@ -56,8 +55,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
             lines.filter { it.branches.isNotEmpty() }.flatMap { line ->
-                val startOffset = document.getLineStartOffset(line.lineNumber - 1)
-                val lineEndOffset = document.getLineEndOffset(line.lineNumber - 1)
+                val startOffset = document.getLineStartOffset(line.lineNumber.toInt() - 1)
+                val lineEndOffset = document.getLineEndOffset(line.lineNumber.toInt() - 1)
                 val result = mutableListOf<OCElement>()
                 val leftOutStmts = mutableListOf<OCElement>()
                 object : OCRecursiveVisitor(
@@ -277,23 +276,23 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                             val isLast = index == filter.lastIndex
                             when (parentExpression.operationSignNode.text) {
                                 "or", "||" -> if (current == null) {
-                                    skipped.count to steppedIn.count
+                                    skipped.count.toInt() to steppedIn.count.toInt()
                                 } else {
                                     if (current.second != 0) {
                                         if (isLast) {
-                                            current.first + skipped.count to steppedIn.count
+                                            current.first + skipped.count.toInt() to steppedIn.count.toInt()
                                         } else {
-                                            current.first + steppedIn.count to skipped.count
+                                            current.first + steppedIn.count.toInt() to skipped.count.toInt()
                                         }
                                     } else {
                                         current
                                     }
                                 }
                                 "and", "&&" -> if (current == null) {
-                                    steppedIn.count to skipped.count
+                                    steppedIn.count.toInt() to skipped.count.toInt()
                                 } else {
                                     if (current.first != 0) {
-                                        steppedIn.count to current.second + skipped.count
+                                        steppedIn.count.toInt() to current.second.toInt() + skipped.count.toInt()
                                     } else {
                                         current
                                     }
@@ -344,7 +343,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                                     startLine - 1
                                 ) + 1
                             startLine toCP startColumn
-                        }(), steppedIn.count, skipped.count
+                        }(), steppedIn.count.toInt(), skipped.count.toInt()
                     )
                 }
             }
@@ -360,12 +359,12 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         }
         return CoverageData(
             root.files.filter { file ->
-            CoverageGeneratorSettings.getInstance().calculateExternalSources || sources?.any {
-                it.path == env.toLocalPath(
-                    file.file
-                ).replace('\\', '/')
-            } == true
-        }.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
+                CoverageGeneratorSettings.getInstance().calculateExternalSources || sources?.any {
+                    it.path == env.toLocalPath(
+                        file.file
+                    ).replace('\\', '/')
+                } == true
+            }.chunked(ceil(root.files.size / Thread.activeCount().toDouble()).toInt()).map {
                 CompletableFuture.supplyAsync {
                     it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
                         CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), file.functions.map { function ->
@@ -373,10 +372,10 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                                 it.functionName == function.name
                             }
                             CoverageFunctionData(
-                                function.startLine,
-                                function.endLine,
+                                function.startLine.toInt(),
+                                function.endLine.toInt(),
                                 function.demangledName,
-                                FunctionLineData(lines.associate { it.lineNumber to it.count }),
+                                FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
                                 if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
                                     lines,
                                     env.toLocalPath(file.file),
@@ -394,28 +393,29 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
     private data class Root(
         @Json(name = "current_working_directory") val currentWorkingDirectory: String,
-        @Json(name = "data_file") val dataFile: String,
+        @Json(name = "data_file") val dataFile: String = "",
         @Json(name = "gcc_version") val gccVersion: String,
+        @Json(name = "format_version") val formatVersion: String = "0",
         val files: List<File>
     )
 
     private data class File(val file: String, val functions: List<Function>, val lines: List<Line>)
 
     private data class Function(
-        val blocks: Int, @Json(name = "blocks_executed") val blocksExecuted: Long, @Json(name = "demangled_name") val demangledName: String, @Json(
+        val blocks: Number, @Json(name = "blocks_executed") val blocksExecuted: Number, @Json(name = "demangled_name") val demangledName: String, @Json(
             name = "end_column"
-        ) val endColumn: Int, @Json(name = "end_line") val endLine: Int, @Json(name = "execution_count") val executionCount: Long,
-        val name: String, @Json(name = "start_column") val startColumn: Int, @Json(name = "start_line") val startLine: Int
+        ) val endColumn: Number, @Json(name = "end_line") val endLine: Number, @Json(name = "execution_count") val executionCount: Number,
+        val name: String, @Json(name = "start_column") val startColumn: Number, @Json(name = "start_line") val startLine: Number
     )
 
     private data class Line(
         val branches: List<Branch>,
-        val count: Long, @Json(name = "line_number") val lineNumber: Int, @Json(name = "unexecuted_block") val unexecutedBlock: Boolean, @Json(
+        val count: Number, @Json(name = "line_number") val lineNumber: Number, @Json(name = "unexecuted_block") val unexecutedBlock: Boolean, @Json(
             name = "function_name"
         ) val functionName: String = ""
     )
 
-    private data class Branch(val count: Int, val fallthrough: Boolean, @Json(name = "throw") val throwing: Boolean)
+    private data class Branch(val count: Number, val fallthrough: Boolean, @Json(name = "throw") val throwing: Boolean)
 
     private fun processJson(
         jsonContents: List<String>,
@@ -425,8 +425,15 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
         val root = jsonContents.map {
             CompletableFuture.supplyAsync<List<File>> {
-                val root = Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)
-                    ?: return@supplyAsync emptyList()
+                val root = try {
+                    Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)
+                        ?: return@supplyAsync emptyList()
+                } catch (e: KlaxonException) {
+                    if (ApplicationManager.getApplication().isInternal) {
+                        Files.writeString(Paths.get(project.basePath), it, Charset.forName("UTF-8"))
+                    }
+                    throw e
+                }
                 val cwd = root.currentWorkingDirectory.replace(
                     '\n',
                     '\\'
@@ -445,7 +452,11 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             it.get()
         }
 
-        return rootToCoverageData(Root("", "", "", root), env, project)
+        return rootToCoverageData(
+            Root(files = root, currentWorkingDirectory = "", gccVersion = ""),
+            env,
+            project
+        )
     }
 
     override fun generateCoverage(
