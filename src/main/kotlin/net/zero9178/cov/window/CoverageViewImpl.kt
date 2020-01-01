@@ -278,8 +278,13 @@ private class CoverageBar : JPanel() {
         private set
 
     private fun updateText() {
-        text = if (max != 0L) (100.0 * current / max).toInt().toString() + "%" else "100%"
-        toolTipText = "$current/$max"
+        if (max != 0L) {
+            text = (100.0 * current / max).toInt().toString() + "%"
+            toolTipText = "$current/$max"
+        } else {
+            text = "N/A"
+            toolTipText = text
+        }
     }
 
     var max: Long = 100
@@ -299,16 +304,23 @@ private class CoverageBar : JPanel() {
         g ?: return
 
         val globalOrDefaultColorScheme = EditorColorsUtil.getGlobalOrDefaultColorScheme()
-        g.color = globalOrDefaultColorScheme.getAttributes(CodeInsightColors.LINE_NONE_COVERAGE).foregroundColor
+
+        g.color =
+            if (max > 0) globalOrDefaultColorScheme.getAttributes(CodeInsightColors.LINE_NONE_COVERAGE).foregroundColor
+            else JBColor.LIGHT_GRAY
         val insets = border.getBorderInsets(this)
         g.fillRect(insets.left, insets.top, width - insets.right - insets.left, height - insets.bottom - insets.top)
-        g.color = globalOrDefaultColorScheme.getAttributes(CodeInsightColors.LINE_FULL_COVERAGE).foregroundColor
-        g.fillRect(
-            insets.left,
-            insets.top,
-            if (max != 0L) ((width - insets.right - insets.left) * current.toDouble() / max).toInt() else width - insets.right - insets.left,
-            height - insets.bottom - insets.top
-        )
+
+        if (max > 0) {
+            g.color = globalOrDefaultColorScheme.getAttributes(CodeInsightColors.LINE_FULL_COVERAGE).foregroundColor
+            g.fillRect(
+                insets.left,
+                insets.top,
+                if (max != 0L) ((width - insets.right - insets.left) * current.toDouble() / max).toInt() else width - insets.right - insets.left,
+                height - insets.bottom - insets.top
+            )
+        }
+
         val textWidth = g.fontMetrics.stringWidth(text)
         val textHeight = g.fontMetrics.height
         g.color = JBColor.BLACK
@@ -346,7 +358,10 @@ private fun getColumnInfo(hasBranchCoverage: Boolean): Array<ColumnInfo<*, *>> {
 
     val fileInfo = TreeColumnInfo("File/Function")
     val branchInfo = ProgressBarColumn("Branch coverage", {
-        100
+        when (val userObject = it.userObject) {
+            is CoverageFunctionData -> if (userObject.branches.isEmpty()) 0 else 100
+            else -> 100
+        }
     }) {
         getBranchCoverage(it.userObject)
     }
@@ -398,9 +413,9 @@ private fun getMaxLineCoverage(functionOrFileData: Any): Long {
 }
 
 private fun getBranchCoverage(functionOrFileData: Any): Long {
-    fun fromFunctionData(it: CoverageFunctionData): Long {
+    fun fromFunctionData(it: CoverageFunctionData): Long? {
         if (it.branches.isEmpty()) {
-            return 100
+            return null
         }
         return it.branches.map { op ->
             when {
@@ -413,12 +428,12 @@ private fun getBranchCoverage(functionOrFileData: Any): Long {
     }
 
     return when (functionOrFileData) {
-        is CoverageFunctionData -> fromFunctionData(functionOrFileData)
+        is CoverageFunctionData -> fromFunctionData(functionOrFileData) ?: 0
         is CoverageFileData -> {
             if (functionOrFileData.functions.isEmpty()) {
                 100L
             } else {
-                functionOrFileData.functions.values.map(::fromFunctionData).average().toLong()
+                functionOrFileData.functions.values.mapNotNull(::fromFunctionData).average().toLong()
             }
 
         }
