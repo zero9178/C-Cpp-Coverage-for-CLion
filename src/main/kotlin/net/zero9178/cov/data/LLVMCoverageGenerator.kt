@@ -53,7 +53,9 @@ class LLVMCoverageGenerator(
         ) ?: return
         cmdLine.withEnvironment(
             "LLVM_PROFILE_FILE",
-            environment.toEnvPath(config.configurationGenerationDir.resolve("${config.target.name}-%p.profraw").absolutePath)
+            environment.toEnvPath(
+                config.configurationGenerationDir.resolve("${config.target.name}-%p.profraw").absolutePath
+            )
         )
     }
 
@@ -134,7 +136,8 @@ class LLVMCoverageGenerator(
 
                 override fun toJson(value: Any): String {
                     val region = value as? Region ?: return ""
-                    return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
+                    return "[${region.start.first},${region.start.second},${region.start.first},${region.start
+                        .second}," +
                             "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
                 }
             }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
@@ -215,7 +218,9 @@ class LLVMCoverageGenerator(
                                                     }
                                                 )
                                             }),
-                                            if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) findStatementsForBranches(
+                                            if (CoverageGeneratorSettings.getInstance()
+                                                    .branchCoverageEnabled
+                                            ) findStatementsForBranches(
                                                 regions.first().start, regions.last().end,
                                                 nonGaps.toMutableList(),
                                                 environment.toLocalPath(file.filename),
@@ -293,9 +298,8 @@ class LLVMCoverageGenerator(
             val branches = mutableListOf<CoverageBranchData>()
 
             object : OCVisitor(), PsiRecursiveVisitor {
-                override fun visitElement(element: PsiElement?) {
+                override fun visitElement(element: PsiElement) {
                     super.visitElement(element)
-                    element ?: return
 
                     var curr: PsiElement? = element.firstChild
                     while (curr != null) {
@@ -462,7 +466,11 @@ class LLVMCoverageGenerator(
             environment.toEnvPath(config.productFile?.absolutePath ?: "")
         )
         val llvmCov = environment.hostMachine.runProcess(
-            GeneralCommandLine(input).withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
+            GeneralCommandLine(input).withWorkDirectory(
+                environment.toEnvPath(
+                    config.configurationGenerationDir.absolutePath
+                )
+            ),
             null,
             -1
         )
