@@ -40,7 +40,7 @@ For further details, known issues and differences of compilers see <a href="http
     </actions>
 
     <applicationListeners>
-        <listener class="net.zero9178.cov.settings.CoverageGeneratorSettings$Registrar"
+        <listener class="net.zero9178.cov.settings.CoverageGeneratorSettings$Registrator"
                   topic="com.intellij.ide.AppLifecycleListener"/>
     </applicationListeners>
 

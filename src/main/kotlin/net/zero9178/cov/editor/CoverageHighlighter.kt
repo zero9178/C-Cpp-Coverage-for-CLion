@@ -2,8 +2,8 @@ package net.zero9178.cov.editor
 
 import com.intellij.codeInsight.highlighting.HighlightManager
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.ServiceManager
+import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.*
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColorsUtil
@@ -42,8 +42,11 @@ class CoverageHighlighter(private val myProject: Project) {
         val ranges = myActiveHighlighting.getOrPut(path) { mutableListOf() }
         for ((start, end, covered) in info.highLightedLines) {
             val colour =
-                colorScheme.getAttributes(if (covered) CodeInsightColors.LINE_FULL_COVERAGE else CodeInsightColors.LINE_NONE_COVERAGE)
-                    .foregroundColor
+                colorScheme.getAttributes(
+                    if (covered)
+                        CodeInsightColors.LINE_FULL_COVERAGE
+                    else CodeInsightColors.LINE_NONE_COVERAGE
+                ).foregroundColor
             highlightManager.addRangeHighlight(
                 editor,
                 editor.logicalPositionToOffset(start),
@@ -54,36 +57,37 @@ class CoverageHighlighter(private val myProject: Project) {
             )
         }
 
-        myActiveInlays.plusAssign(info.branchInfo.map { (startPos, steppedIn, skipped) ->
+        class MyEditorCustomElementRenderer(val fullCoverage: Boolean) : EditorCustomElementRenderer {
+            override fun paint(
+                inlay: Inlay<*>,
+                g: Graphics,
+                targetRegion: Rectangle,
+                textAttributes: TextAttributes
+            ) {
+                val margin = 1
+                val icon = IconUtil.toSize(
+                    if (fullCoverage) AllIcons.Actions.Commit else AllIcons.General.Error,
+                    targetRegion.height - 2 * margin,
+                    targetRegion.height - 2 * margin
+                )
+
+                val graphics = g.create() as Graphics2D
+                graphics.composite = AlphaComposite.SrcAtop.derive(1.0f)
+                icon.paintIcon(editor.component, graphics, targetRegion.x + margin, targetRegion.y + margin)
+                graphics.dispose()
+            }
+
+            override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+                return calcHeightInPixels(inlay)
+            }
+        }
+
+        myActiveInlays += info.branchInfo.map { (startPos, steppedIn, skipped) ->
             editor.inlayModel.addInlineElement(
                 editor.logicalPositionToOffset(startPos),
-                object : EditorCustomElementRenderer {
-
-                    override fun paint(
-                        inlay: Inlay<*>,
-                        g: Graphics,
-                        targetRegion: Rectangle,
-                        textAttributes: TextAttributes
-                    ) {
-                        val margin = 1
-                        val icon = IconUtil.toSize(
-                            if (steppedIn && skipped) AllIcons.Actions.Commit else AllIcons.General.Error,
-                            targetRegion.height - 2 * margin,
-                            targetRegion.height - 2 * margin
-                        )
-
-                        val graphics = g.create() as Graphics2D
-                        graphics.composite = AlphaComposite.SrcAtop.derive(1.0f)
-                        icon.paintIcon(editor.component, graphics, targetRegion.x + margin, targetRegion.y + margin)
-                        graphics.dispose()
-                    }
-
-                    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-                        return calcHeightInPixels(inlay)
-                    }
-                }
+                MyEditorCustomElementRenderer(steppedIn && skipped)
             )
-        })
+        }
     }
 
     private data class HighLightInfo(
@@ -91,10 +95,9 @@ class CoverageHighlighter(private val myProject: Project) {
         val branchInfo: List<Triple<LogicalPosition, Boolean, Boolean>>
     )
 
-    private var myActiveInlays: MutableList<Inlay<*>?> = mutableListOf()
+    private val myActiveInlays: MutableList<Inlay<*>?> = mutableListOf()
     private val myActiveHighlighting: MutableMap<String, MutableList<RangeHighlighter>> = mutableMapOf()
-    private val myHighlighting: MutableMap<String, HighLightInfo> =
-        mutableMapOf()
+    private val myHighlighting: MutableMap<String, HighLightInfo> = mutableMapOf()
 
     fun setCoverageData(coverageData: CoverageData?) {
         myHighlighting.clear()
@@ -105,23 +108,24 @@ class CoverageHighlighter(private val myProject: Project) {
                 val canonicalPath = vs.canonicalPath ?: return@find false
                 canonicalPath == t
             } ?: return@forEach
-            ApplicationManager.getApplication().invokeLater {
+
+            invokeLater {
                 u.forEach {
                     highlightManager.removeSegmentHighlighter(editor, it)
                 }
             }
         }
         val currentInlays = myActiveInlays
-        ApplicationManager.getApplication().invokeLater {
+        invokeLater {
             currentInlays.filterNotNull().forEach { it.dispose() }
         }
-        myActiveInlays = mutableListOf()
+        myActiveInlays.clear()
         myActiveHighlighting.clear()
         if (coverageData == null) {
             return
         }
         for ((name, file) in coverageData.files) {
-            myHighlighting[name] = HighLightInfo(file.functions.values.flatMap { functionData ->
+            val lines = file.functions.values.flatMap { functionData ->
                 when (functionData.coverage) {
                     is FunctionLineData -> functionData.coverage.data.map {
                         Triple(
@@ -138,7 +142,8 @@ class CoverageHighlighter(private val myProject: Project) {
                         )
                     }
                 }
-            }, file.functions.values.flatMap { functionData ->
+            }
+            val branches = file.functions.values.flatMap { functionData ->
                 functionData.branches.map {
                     Triple(
                         LogicalPosition(it.startPos.first - 1, it.startPos.second - 1),
@@ -146,9 +151,10 @@ class CoverageHighlighter(private val myProject: Project) {
                         it.skippedCount != 0
                     )
                 }
-            }.distinctBy { it.first })
+            }.distinctBy { it.first }
+            myHighlighting[name] = HighLightInfo(lines, branches)
         }
-        ApplicationManager.getApplication().invokeLater {
+        invokeLater {
             EditorFactory.getInstance().allEditors.forEach {
                 applyOnEditor(it)
             }
@@ -156,6 +162,6 @@ class CoverageHighlighter(private val myProject: Project) {
     }
 
     companion object {
-        fun getInstance(project: Project) = ServiceManager.getService(project, CoverageHighlighter::class.java)!!
+        fun getInstance(project: Project) = project.service<CoverageHighlighter>()
     }
 }

@@ -63,14 +63,7 @@ class LLVMCoverageGenerator(
 
     private data class Data(val files: List<File>, val functions: List<Function>)
 
-    private data class File(val filename: String/*, val segments: List<Segment>*/)
-
-//    private data class Segment(
-//        val pos: ComparablePair<Int, Int>,
-//        val count: Long,
-//        val hasCount: Boolean,
-//        val isRegionEntry: Boolean
-//    )
+    private data class File(val filename: String)
 
     private data class Function(
         val name: String,
@@ -98,141 +91,143 @@ class LLVMCoverageGenerator(
         project: Project
     ): CoverageData {
         val jsonStart = System.nanoTime()
-        val root = Klaxon()
-            /*.converter(object : Converter {
-                override fun canConvert(cls: Class<*>) = cls == Segment::class.java
+        val root = Klaxon().converter(object : Converter {
+            override fun canConvert(cls: Class<*>) = cls == Region::class.java
 
-                override fun fromJson(jv: JsonValue): Any? {
-                    val array = jv.array ?: return null
-                    return Segment(
-                        (array[0] as Number).toInt() toCP
-                                (array[1] as Number).toInt(),
-                        (array[2] as Number).toLong(),
-                        if (array[3] is Boolean) array[3] as Boolean else array[3] as Number != 0,
-                        if (array[4] is Boolean) array[4] as Boolean else array[4] as Number != 0
-                    )
-                }
+            override fun fromJson(jv: JsonValue): Any? {
+                val array = jv.array ?: return null
+                return Region(
+                    (array[0] as Number).toInt() toCP
+                            (array[1] as Number).toInt(),
+                    (array[2] as Number).toInt() toCP
+                            (array[3] as Number).toInt(),
+                    (array[4] as Number).toLong(),
+                    (array[5] as Number).toInt(),
+                    (array[6] as Number).toInt(),
+                    (array[7] as Number).toInt()
+                )
+            }
 
-                override fun toJson(value: Any): String {
-                    val segment = value as? Segment ?: return ""
-                    return "[${segment.pos.first},${segment.pos.second},${segment.count},${segment.hasCount},${segment.isRegionEntry}]"
-                }
-            })*/.converter(object : Converter {
-                override fun canConvert(cls: Class<*>) = cls == Region::class.java
-
-                override fun fromJson(jv: JsonValue): Any? {
-                    val array = jv.array ?: return null
-                    return Region(
-                        (array[0] as Number).toInt() toCP
-                                (array[1] as Number).toInt(),
-                        (array[2] as Number).toInt() toCP
-                                (array[3] as Number).toInt(),
-                        (array[4] as Number).toLong(),
-                        (array[5] as Number).toInt(),
-                        (array[6] as Number).toInt(),
-                        (array[7] as Number).toInt()
-                    )
-                }
-
-                override fun toJson(value: Any): String {
-                    val region = value as? Region ?: return ""
-                    return "[${region.start.first},${region.start.second},${region.start.first},${region.start
-                        .second}," +
-                            "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
-                }
-            }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
+            override fun toJson(value: Any): String {
+                val region = value as? Region ?: return ""
+                return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
+                        "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
+            }
+        }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
             ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
         log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
 
+        return processRoot(root, environment, project)
+    }
+
+    private fun processRoot(
+        root: Root,
+        environment: CPPEnvironment,
+        project: Project
+    ): CoverageData {
         val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
         val demangledNames = demangle(environment, mangledNames)
 
         val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
             ModuleRootManager.getInstance(module).contentEntries.flatMap {
                 it.sourceFolderFiles.toList()
-            }
-        }
+            }.map {
+                it.path
+            }.toHashSet()
+        } ?: emptySet<String>()
 
-        return CoverageData(
-            root.data.flatMap { data ->
-                //Associates the filename with a list of all functions in that file
-                val funcMap =
-                    data.functions.flatMap { func -> func.filenames.map { it to func } }.groupBy({ it.first }) {
-                        it.second
-                    }
+        val filesMap = root.data.flatMap { data ->
+            //Associates the filename with a list of all functions in that file
+            val funcMap =
+                data.functions.flatMap { func ->
+                    func.filenames.map { it to func }
+                }.groupBy({ it.first }) {
+                    it.second
+                }
 
-                data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
+            data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
 
-                    val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
-                    if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && sources?.any {
-                            it.path == filePath
-                        } == false) {
-                        return@fileFold result
-                    }
-                    val activeCount = Thread.activeCount()
-                    result + CoverageFileData(
-                        filePath,
-                        funcMap.getOrDefault(
-                            file.filename,
-                            emptyList()
-                        ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                            CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
-                                functions.fold(emptyList()) { result, function ->
+                val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
+                if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && !sources.any {
+                        it == filePath
+                    }) {
+                    return@fileFold result
+                }
 
-                                    val regions = function.regions.filter {
-                                        function.filenames[it.fileId] == file.filename
-                                    }.sortedWith(Comparator { lhs, rhs ->
-                                        when {
-                                            lhs.start != rhs.start -> {
-                                                lhs.start.compareTo(rhs.start)
-                                            }
-                                            lhs.end != rhs.end -> {
-                                                lhs.end.compareTo(rhs.end)
-                                            }
-                                            else -> {
-                                                lhs.regionKind.compareTo(rhs.regionKind)
-                                            }
-                                        }
-                                    })
-                                    val nonGaps = regions.filter {
-                                        it.regionKind != Region.GAP
+                val activeCount = Thread.activeCount()
+                val functionsMap = funcMap.getOrDefault(
+                    file.filename,
+                    emptyList()
+                ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
+                    CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
+                        functions.fold(emptyList()) { result, function ->
+
+                            val regions = function.regions.filter {
+                                function.filenames[it.fileId] == file.filename
+                            }.sortedWith(Comparator { lhs, rhs ->
+                                when {
+                                    lhs.start != rhs.start -> {
+                                        lhs.start.compareTo(rhs.start)
                                     }
-
-                                    if (regions.isEmpty()) {
-                                        result
-                                    } else {
-                                        result + CoverageFunctionData(
-                                            regions.first().start.first,
-                                            regions.first().end.first,
-                                            demangledNames[function.name] ?: function.name,
-                                            FunctionRegionData(regions.map { region ->
-                                                FunctionRegionData.Region(
-                                                    region.start,
-                                                    region.end,
-                                                    region.executionCount,
-                                                    when (region.regionKind) {
-                                                        Region.GAP -> FunctionRegionData.Region.Kind.Gap
-                                                        Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
-                                                        Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
-                                                        else -> FunctionRegionData.Region.Kind.Code
-                                                    }
-                                                )
-                                            }),
-                                            if (CoverageGeneratorSettings.getInstance()
-                                                    .branchCoverageEnabled
-                                            ) findStatementsForBranches(
-                                                regions.first().start, regions.last().end,
-                                                nonGaps.toMutableList(),
-                                                environment.toLocalPath(file.filename),
-                                                project
-                                            ) else emptyList()
-                                        )
+                                    lhs.end != rhs.end -> {
+                                        lhs.end.compareTo(rhs.end)
+                                    }
+                                    else -> {
+                                        lhs.regionKind.compareTo(rhs.regionKind)
                                     }
                                 }
+                            })
+
+                            val nonGaps = regions.filter {
+                                it.regionKind != Region.GAP
                             }
-                        }.flatMap { it.get() }.associateBy { it.functionName })
-                }
-            }.associateBy { it.filePath },
+
+                            if (regions.isEmpty()) {
+                                return@fold result
+                            }
+
+                            val functionRegions = regions.map { region ->
+                                FunctionRegionData.Region(
+                                    region.start,
+                                    region.end,
+                                    region.executionCount,
+                                    when (region.regionKind) {
+                                        Region.GAP -> FunctionRegionData.Region.Kind.Gap
+                                        Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                                        Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                                        else -> FunctionRegionData.Region.Kind.Code
+                                    }
+                                )
+                            }
+
+                            result + CoverageFunctionData(
+                                regions.first().start.first,
+                                regions.first().end.first,
+                                demangledNames[function.name] ?: function.name,
+                                FunctionRegionData(functionRegions),
+                                if (CoverageGeneratorSettings.getInstance()
+                                        .branchCoverageEnabled
+                                )
+                                    findStatementsForBranches(
+                                        regions.first().start, regions.last().end,
+                                        nonGaps.toMutableList(),
+                                        environment.toLocalPath(file.filename),
+                                        project
+                                    ) else emptyList()
+                            )
+                        }
+                    }
+                }.flatMap { it.get() }.associateBy { it.functionName }
+
+                result + CoverageFileData(
+                    filePath,
+                    functionsMap
+                )
+
+            }
+        }.associateBy { it.filePath }
+        return CoverageData(
+            filesMap,
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
             CoverageGeneratorSettings.getInstance().calculateExternalSources
         )
