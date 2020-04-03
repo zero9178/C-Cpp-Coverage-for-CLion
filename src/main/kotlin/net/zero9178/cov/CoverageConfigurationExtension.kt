@@ -3,17 +3,16 @@ package net.zero9178.cov
 import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunnerSettings
+import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
-import com.intellij.openapi.util.Key
 import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
@@ -107,9 +106,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
             return
         }
         val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
-        handler.addProcessListener(object : ProcessListener {
-            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {}
-
+        handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
                 ProgressManager.getInstance()
                     .run(object : Task.Modal(configuration.project, "Gathering coverage...", false) {
@@ -122,17 +119,19 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     executionTarget
                                 )
                             val root = DefaultMutableTreeNode("invisible-root")
+                            CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
                             if (data != null) {
                                 for ((_, value) in data.files) {
                                     val fileNode = object : DefaultMutableTreeNode(value) {
                                         override fun toString(): String {
                                             val filePath =
-                                                ((userObject as? CoverageFileData)?.filePath
-                                                    ?: return userObject.toString()).replace('\\', '/')
-                                            val basePath =
-                                                (configuration.project.basePath ?: return filePath).replace('\\', '/')
-                                            return if (filePath.startsWith(basePath)) {
-                                                Paths.get(basePath).relativize(Paths.get(filePath)).toString()
+                                                (userObject as? CoverageFileData)?.filePath?.replace('\\', '/')
+                                            filePath ?: return userObject.toString()
+                                            val projectPath =
+                                                configuration.project.basePath?.replace('\\', '/')
+                                            projectPath ?: return filePath
+                                            return if (filePath.startsWith(projectPath)) {
+                                                Paths.get(projectPath).relativize(Paths.get(filePath)).toString()
                                             } else {
                                                 filePath
                                             }
@@ -149,8 +148,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     }
                                 }
                             }
-                            CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
-                            ApplicationManager.getApplication().invokeLater {
+                            invokeLater {
                                 CoverageView.getInstance(configuration.project)
                                     .setRoot(
                                         root,
@@ -163,10 +161,6 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                         }
                     })
             }
-
-            override fun processWillTerminate(event: ProcessEvent, willBeDestroyed: Boolean) {}
-
-            override fun startNotified(event: ProcessEvent) {}
         })
     }
 

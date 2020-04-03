@@ -4,6 +4,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.ui.TextBrowseFolderListener
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
@@ -11,8 +12,8 @@ import com.jetbrains.cidr.cpp.toolchains.CPPToolchainsListener
 import com.jetbrains.cidr.cpp.toolchains.WSL
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.awt.event.ItemEvent
-import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.KeyListener
 import java.nio.file.Paths
 import javax.swing.DefaultComboBoxModel
 
@@ -62,100 +63,51 @@ class SettingsWindowImpl : SettingsWindow() {
             })
         updateToolChainComboBox()
 
-        myGcovOrllvmCovBrowser.addBrowseFolderListener(
-            object : TextBrowseFolderListener(
-                FileChooserDescriptor(
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                )
-            ) {
-                override fun onFileChosen(chosenFile: VirtualFile) {
-                    super.onFileChosen(chosenFile)
-                    val selectedItem = myComboBox.selectedItem as? String ?: return
-                    val info = myTempToolchainState[selectedItem]
-                    if (info != null) {
-                        info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
-                        updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
-                    }
-                }
-            }
-        )
-        myGcovOrllvmCovBrowser.textField.addKeyListener(object : KeyAdapter() {
-            override fun keyReleased(e: KeyEvent?) {
-                val selectedItem = myComboBox.selectedItem as? String ?: return
-                val info = myTempToolchainState[selectedItem]
-                if (info != null) {
-                    info.gcovOrllvmCovPath = myGcovOrllvmCovBrowser.text
-                    updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
-                }
-            }
-        })
+        class MyTextBrowseFolderListener(
+            textFieldWithBrowseButton: TextFieldWithBrowseButton,
+            val runnable: (String, CoverageGeneratorSettings.GeneratorInfo, String) -> Unit
+        ) :
+            TextBrowseFolderListener(
+                FileChooserDescriptor(true, false, false, false, false, false)
+            ), KeyListener {
 
-        myLLVMProfdataBrowser.addBrowseFolderListener(
-            object : TextBrowseFolderListener(
-                FileChooserDescriptor(
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                )
-            ) {
-                override fun onFileChosen(chosenFile: VirtualFile) {
-                    super.onFileChosen(chosenFile)
-                    val selectedItem = myComboBox.selectedItem as? String ?: return
-                    val info = myTempToolchainState[selectedItem]
-                    if (info != null) {
-                        info.llvmProfDataPath = myLLVMProfdataBrowser.text
-                    }
-                }
+            init {
+                textFieldWithBrowseButton.addBrowseFolderListener(this)
+                textFieldWithBrowseButton.textField.addKeyListener(this)
             }
-        )
-        myLLVMProfdataBrowser.textField.addKeyListener(object : KeyAdapter() {
-            override fun keyReleased(e: KeyEvent?) {
-                val selectedItem = myComboBox.selectedItem as? String ?: return
-                val info = myTempToolchainState[selectedItem]
-                if (info != null) {
-                    info.llvmProfDataPath = myLLVMProfdataBrowser.text
-                }
-            }
-        })
 
-        myDemanglerBrowser.addBrowseFolderListener(
-            object : TextBrowseFolderListener(
-                FileChooserDescriptor(
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                )
-            ) {
-                override fun onFileChosen(chosenFile: VirtualFile) {
-                    super.onFileChosen(chosenFile)
-                    val selectedItem = myComboBox.selectedItem as? String ?: return
-                    val info = myTempToolchainState[selectedItem]
-                    if (info != null) {
-                        info.demangler = myDemanglerBrowser.text
-                    }
-                }
+            override fun onFileChosen(chosenFile: VirtualFile) {
+                super.onFileChosen(chosenFile)
+                textChanged()
             }
-        )
-        myDemanglerBrowser.textField.addKeyListener(object : KeyAdapter() {
-            override fun keyReleased(e: KeyEvent?) {
+
+            private fun textChanged() {
                 val selectedItem = myComboBox.selectedItem as? String ?: return
-                val info = myTempToolchainState[selectedItem]
-                if (info != null) {
-                    info.demangler = myDemanglerBrowser.text
-                }
+                val info = myTempToolchainState[selectedItem] ?: return
+                runnable(componentText, info, selectedItem)
             }
-        })
+
+            override fun keyReleased(e: KeyEvent?) {
+                textChanged()
+            }
+
+            override fun keyTyped(e: KeyEvent?) {}
+
+            override fun keyPressed(e: KeyEvent?) {}
+        }
+
+        MyTextBrowseFolderListener(myGcovOrllvmCovBrowser) { text, info, selectedItem ->
+            info.gcovOrllvmCovPath = text
+            updateLLVMFields(CPPToolchains.getInstance().toolchains.find { it.name == selectedItem }?.wsl)
+        }
+
+        MyTextBrowseFolderListener(myLLVMProfdataBrowser) { text, info, _ ->
+            info.llvmProfDataPath = text
+        }
+
+        MyTextBrowseFolderListener(myDemanglerBrowser) { text, info, _ ->
+            info.demangler = text
+        }
 
         myComboBox.addItemListener {
             if (it.stateChange == ItemEvent.SELECTED) {

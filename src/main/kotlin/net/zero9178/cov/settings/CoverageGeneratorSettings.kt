@@ -178,10 +178,10 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     }
 
     companion object {
-        fun getInstance() = ServiceManager.getService(CoverageGeneratorSettings::class.java)!!
+        fun getInstance() = service<CoverageGeneratorSettings>()
     }
 
-    class Registrar : AppLifecycleListener {
+    class Registrator : AppLifecycleListener {
         override fun appFrameCreated(commandLineArgs: MutableList<String>) {
             getInstance()
         }
@@ -193,7 +193,6 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
     var compiler =
         toolchain.customCXXCompilerPath
             ?: if (toolset !is WSL) System.getenv("CXX")?.ifBlank { System.getenv("CC") } else null
-    //Lets not deal with WSL yet
     return if (toolset is MinGW || toolset is NativeUnixToolSet || toolset is WSL) {
 
         val findExe = { prefix: String, name: String, suffix: String, extraPath: Path ->
