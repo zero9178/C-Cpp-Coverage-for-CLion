@@ -115,7 +115,7 @@ class CoverageHighlighter(private val myProject: Project) {
                 }
             }
         }
-        val currentInlays = myActiveInlays
+        val currentInlays = myActiveInlays.toList()
         invokeLater {
             currentInlays.filterNotNull().forEach { it.dispose() }
         }
