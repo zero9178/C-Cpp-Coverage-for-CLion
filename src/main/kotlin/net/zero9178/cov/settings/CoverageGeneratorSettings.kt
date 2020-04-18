@@ -193,115 +193,118 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
     var compiler =
         toolchain.customCXXCompilerPath
             ?: if (toolset !is WSL) System.getenv("CXX")?.ifBlank { System.getenv("CC") } else null
-    return if (toolset is MinGW || toolset is NativeUnixToolSet || toolset is WSL) {
-
-        val findExe = { prefix: String, name: String, suffix: String, extraPath: Path ->
-            val insideSameDir = extraPath.toFile().listFiles()?.asSequence()?.map {
-                "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
-            }?.filterNotNull()?.maxBy {
-                it.value.length
-            }?.value
-            when {
-                insideSameDir != null -> extraPath.resolve(insideSameDir).toString()
-                toolset !is WSL -> {
-                    val pair = System.getenv("PATH").splitToSequence(File.pathSeparatorChar).asSequence().map {
-                        Paths.get(it).toFile()
-                    }.map { path ->
-                        val result = path.listFiles()?.asSequence()?.map {
-                            it to "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
-                        }?.filter { it.second != null }?.map { it.first to it.second!! }
-                            ?.maxBy { it.second.value.length }
-                        result
-                    }.filterNotNull().maxBy { it.second.value.length }
-                    pair?.first?.absolutePath
-                }
-                else -> null
+    val findExe = { prefix: String, name: String, suffix: String, extraPath: Path ->
+        val insideSameDir = extraPath.toFile().listFiles()?.asSequence()?.map {
+            "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
+        }?.filterNotNull()?.maxBy {
+            it.value.length
+        }?.value
+        when {
+            insideSameDir != null -> extraPath.resolve(insideSameDir).toString()
+            toolset !is WSL -> {
+                val pair = System.getenv("PATH").splitToSequence(File.pathSeparatorChar).asSequence().map {
+                    Paths.get(it).toFile()
+                }.map { path ->
+                    val result = path.listFiles()?.asSequence()?.map {
+                        it to "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
+                    }?.filter { it.second != null }?.map { it.first to it.second!! }
+                        ?.maxBy { it.second.value.length }
+                    result
+                }.filterNotNull().maxBy { it.second.value.length }
+                pair?.first?.absolutePath
             }
+            else -> null
         }
+    }
 
-        if (compiler != null && compiler.contains("clang", true)) {
-            //We are using clang so we need to look for llvm-cov. We are first going to check if
-            //llvm-cov is next to the compiler. If not we looking for it on PATH
-
-            val compilerName = Paths.get(compiler).fileName.toString()
-
-            val clangName = if (compilerName.contains("clang++")) "clang++" else "clang"
-
-            val prefix = compilerName.substringBefore(clangName)
-
-            val suffix = compilerName.substringAfter(clangName)
-
-            val covPath = findExe(
-                prefix,
-                "llvm-cov",
-                suffix,
-                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
-            )
-
-            val profPath = findExe(
-                prefix,
-                "llvm-profdata",
-                suffix,
-                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
-            )
-
-            val llvmFilt = findExe(
-                prefix,
-                "llvm-cxxfilt",
-                suffix,
-                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
-            )
-
-            val finalFilt = llvmFilt ?: findExe(
-                prefix,
-                "c++filt",
-                suffix,
-                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
-            )
-
-            return if (profPath == null || covPath == null) {
-                CoverageGeneratorSettings.GeneratorInfo()
-            } else {
-                CoverageGeneratorSettings.GeneratorInfo(
-                    if (toolset is WSL) toolset.toEnvPath(covPath) else covPath,
-                    if (toolset is WSL) toolset.toEnvPath(profPath) else profPath,
-                    if (finalFilt != null) {
-                        if (toolset is WSL) toolset.toEnvPath(finalFilt) else finalFilt
-                    } else null
-                )
-            }
-        } else if (compiler == null) {
-            if (toolset is MinGW) {
-                val path = toolset.home.toPath().resolve("bin")
-                    .resolve(if (OSType.getCurrent() == OSType.WIN) "gcov.exe" else "gcov")
-                return if (path.exists()) {
-                    CoverageGeneratorSettings.GeneratorInfo(path.toString())
-                } else {
-                    CoverageGeneratorSettings.GeneratorInfo()
-                }
-            }
-            compiler = "/usr/bin/gcc"
-        }
+    if (compiler != null && compiler.contains("clang", true)) {
+        //We are using clang so we need to look for llvm-cov. We are first going to check if
+        //llvm-cov is next to the compiler. If not we looking for it on PATH
 
         val compilerName = Paths.get(compiler).fileName.toString()
 
-        val gccName = if (compilerName.contains("g++")) "g++" else "gcc"
+        val clangName = when {
+            compilerName.contains("clang++") -> "clang++"
+            compilerName.contains("clang-cl") -> "clang-cl"
+            else -> "clang"
+        }
 
-        val prefix = compilerName.substringBefore(gccName)
+        val prefix = compilerName.substringBefore(clangName)
 
-        val suffix = compilerName.substringAfter(gccName)
+        val suffix = compilerName.substringAfter(clangName)
 
-        val gcovPath = findExe(
+        val covPath = findExe(
             prefix,
-            "gcov",
+            "llvm-cov",
             suffix,
             Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
         )
-        if (gcovPath != null) {
-            CoverageGeneratorSettings.GeneratorInfo(if (toolset is WSL) toolset.toEnvPath(gcovPath) else gcovPath)
-        } else {
+
+        val profPath = findExe(
+            prefix,
+            "llvm-profdata",
+            suffix,
+            Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+        )
+
+        val llvmFilt = findExe(
+            prefix,
+            "llvm-cxxfilt",
+            suffix,
+            Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+        )
+
+        val finalFilt = llvmFilt ?: findExe(
+            prefix,
+            "c++filt",
+            suffix,
+            Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+        )
+
+        return if (profPath == null || covPath == null) {
             CoverageGeneratorSettings.GeneratorInfo()
+        } else {
+            CoverageGeneratorSettings.GeneratorInfo(
+                if (toolset is WSL) toolset.toEnvPath(covPath) else covPath,
+                if (toolset is WSL) toolset.toEnvPath(profPath) else profPath,
+                if (finalFilt != null) {
+                    if (toolset is WSL) toolset.toEnvPath(finalFilt) else finalFilt
+                } else null
+            )
         }
+    } else if (compiler == null) {
+        if (toolset is MSVC) {
+            // If the toolset is MSVC but the compiler isn't clang we have no chance. We are done here
+            return CoverageGeneratorSettings.GeneratorInfo()
+        }
+        if (toolset is MinGW) {
+            val path = toolset.home.toPath().resolve("bin")
+                .resolve(if (OSType.getCurrent() == OSType.WIN) "gcov.exe" else "gcov")
+            return if (path.exists()) {
+                CoverageGeneratorSettings.GeneratorInfo(path.toString())
+            } else {
+                CoverageGeneratorSettings.GeneratorInfo()
+            }
+        }
+        compiler = "/usr/bin/gcc"
+    }
+
+    val compilerName = Paths.get(compiler).fileName.toString()
+
+    val gccName = if (compilerName.contains("g++")) "g++" else "gcc"
+
+    val prefix = compilerName.substringBefore(gccName)
+
+    val suffix = compilerName.substringAfter(gccName)
+
+    val gcovPath = findExe(
+        prefix,
+        "gcov",
+        suffix,
+        Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+    )
+    return if (gcovPath != null) {
+        CoverageGeneratorSettings.GeneratorInfo(if (toolset is WSL) toolset.toEnvPath(gcovPath) else gcovPath)
     } else {
         CoverageGeneratorSettings.GeneratorInfo()
     }
