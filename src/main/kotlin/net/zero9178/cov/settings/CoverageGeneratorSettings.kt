@@ -247,19 +247,28 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
             Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
         )
 
-        val llvmFilt = findExe(
-            prefix,
-            "llvm-cxxfilt",
-            suffix,
-            Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
-        )
+        val finalFilt = if (toolset !is MSVC) {
+            val llvmFilt = findExe(
+                prefix,
+                "llvm-cxxfilt",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
 
-        val finalFilt = llvmFilt ?: findExe(
-            prefix,
-            "c++filt",
-            suffix,
-            Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
-        )
+            llvmFilt ?: findExe(
+                prefix,
+                "c++filt",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
+        } else {
+            findExe(
+                prefix,
+                "llvm-undname",
+                suffix,
+                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+            )
+        }
 
         return if (profPath == null || covPath == null) {
             CoverageGeneratorSettings.GeneratorInfo()

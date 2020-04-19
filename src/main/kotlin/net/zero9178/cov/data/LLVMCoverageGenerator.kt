@@ -237,27 +237,42 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         mangledNames: List<String>
     ): Map<String, String> {
+        if (mangledNames.isEmpty()) {
+            return emptyMap()
+        }
         return if (myDemangler != null) {
+            val isUndname = myDemangler.contains("undname")
             val p = environment.hostMachine.createProcess(
-                GeneralCommandLine(myDemangler).withRedirectErrorStream(true),
+                GeneralCommandLine(listOf(myDemangler) + if (isUndname) listOf("--no-calling-convention") else emptyList()).withRedirectErrorStream(
+                    true
+                ),
                 false,
                 false
             )
 
+            var isFirst = true
             var result = listOf<String>()
             p.process.outputStream.bufferedWriter().use { writer ->
                 p.process.inputStream.bufferedReader().use { reader ->
                     result = mangledNames.map { mangled ->
-                        writer.appendln(
-                            if (mangled.startsWith('_')) mangled else mangled.substring(
-                                1 + mangled.indexOf(
-                                    ':'
-                                )
-                            )
-                        )
+                        val input =
+                            if (mangled.matches("^(_{1,3}Z|\\?).*".toRegex())) mangled else mangled.substringAfter(':')
+                        writer.appendln(input)
                         writer.flush()
+                        if (isUndname) {
+                            if (!isFirst) {
+                                reader.readLine()
+                            } else {
+                                isFirst = false
+                            }
+                            val echo = reader.readLine()
+                            assert(echo == input)
+                        }
                         val output: String? = reader.readLine()
-                        output ?: mangled
+                        if (output == "error: Invalid mangled name") {
+                            return@map input
+                        }
+                        output ?: input
                     }
                 }
             }

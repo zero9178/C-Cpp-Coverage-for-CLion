@@ -16,13 +16,14 @@
 
 ### Tools
 
-To get coverage you need one of the following compilers: Clang 5 or later, GCC 6 or later.
+To get coverage you need one of the following compilers: Clang(-cl) 5 or later, GCC 6 or later.
 Recommended are Clang 6 onwards and GCC 9 onwards. GCC 6 to 8 are not recommended for larger projects and cannot gather 
 branch coverage. To see why refer to [Differences in compilers](#differences-in-compilers). Both of them use very different ways to gather coverage.
 GCC ships a tool called gcov while clang requires llvm-cov and llvm-profdata. Make sure the tools versions matches your 
 compilers version. When the plugin sees an empty path for either of the tools it will attempt to guess the correct paths
 based on C and C++ compiler paths and prefixes and suffixes in their name. Optionally One can specify a demangler when 
-using Clang to demangle C++ symbols. This is not required with GCC as gcov has a built in demangler.
+using Clang to demangle C++ symbols. This is not required with GCC as gcov has a built in demangler. Tested and 
+supported demanglers are c++filt and llvm-cxxfilt or llvm-undname when using clang-cl. 
 You can specify your gcov and llvm-cov per toolchain by going into the settings menu under `Language & Frameworks -> C/C++ Coverage`.
 There you can also configure different settings related to processing coverage
 
@@ -48,8 +49,11 @@ endif ()
 Alternatively one can enable in the settings to not use auto flag detection. Instead a 'Run Coverage' button will appear
 with which one can explicitly choose to gather coverage data
 
+If your installation of clang does not have the needed profile library you will need to compile it yourself 
+from https://github.com/llvm/llvm-project/tree/master/compiler-rt. Make sure it matches your compilers version
+
 #### Note:
-When using Clang 8 or older on Windows you'll most likely get a linker error due to the symbol `lprofGetHostName` missing.
+When using Clang 8 or older on Windows with the GNU target you'll most likely get a linker error due to the symbol `lprofGetHostName` missing.
 This is due to a bug inside llvm's compiler-rt. To circumvent this add the following lines of code to one of your files:
 ```cpp
 #ifdef __clang__
