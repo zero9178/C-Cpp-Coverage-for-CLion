@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.zero9178</id>
     <name>C/C++ Coverage</name>
-    <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/GCoverage4CLion"/>
+    <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/C-Cpp-Coverage-for-CLion"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
     <idea-version since-build="201.6668"/>
