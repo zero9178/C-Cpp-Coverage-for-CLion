@@ -8,6 +8,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -300,10 +301,17 @@ class LLVMCoverageGenerator(
                 PsiDocumentManager.getInstance(project).getDocument(psiFile)
                     ?: return@runReadActionInSmartMode emptyList()
 
-            val range = TextRange(
-                document.getLineStartOffset(functionStart.first - 1) + functionStart.second - 1,
+            val startOffset = if (functionStart.first - 1 >= document.lineCount) {
+                document.getLineEndOffset(document.lineCount - 1)
+            } else {
+                document.getLineStartOffset(functionStart.first - 1) + functionStart.second - 1
+            }
+            val endOffset = if (functionEnd.first - 1 >= document.lineCount) {
+                document.getLineEndOffset(document.lineCount - 1)
+            } else {
                 document.getLineStartOffset(functionEnd.first - 1) + functionEnd.second - 1
-            )
+            }
+            val range = TextRange(startOffset, endOffset)
 
             val branches = mutableListOf<CoverageBranchData>()
 
@@ -374,24 +382,31 @@ class LLVMCoverageGenerator(
                 }
 
                 private fun find(element: OCElement, removeRegions: Boolean): Region? {
-                    val startLine = document.getLineNumber(element.textOffset) + 1
-                    val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-                    val startPos = startLine toCP startColumn
-                    val endLine = document.getLineNumber(element.textRange.endOffset) + 1
-                    val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
-                    val endPos = endLine toCP endColumn
-                    val conIndex = regions.indexOfFirst {
-                        it.start == startPos && it.end == endPos
-                    }
-                    if (conIndex < 0) {
-                        //log.warn("Could not find Region that starts at $startPos to $endPos")
+                    try {
+                        val startLine = document.getLineNumber(element.textOffset) + 1
+                        val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
+                        val startPos = startLine toCP startColumn
+                        val endLine = document.getLineNumber(element.textRange.endOffset) + 1
+                        val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
+                        val endPos = endLine toCP endColumn
+                        val conIndex = regions.indexOfFirst {
+                            it.start == startPos && it.end == endPos
+                        }
+                        if (conIndex < 0) {
+                            //log.warn("Could not find Region that starts at $startPos to $endPos")
+                            return null
+                        }
+                        val result = regions[conIndex]
+                        if (removeRegions) {
+                            regions.removeAll(regions.slice(0..conIndex))
+                        }
+                        return result
+                    } catch (e: ProcessCanceledException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log.warn(e)
                         return null
                     }
-                    val result = regions[conIndex]
-                    if (removeRegions) {
-                        regions.removeAll(regions.slice(0..conIndex))
-                    }
-                    return result
                 }
 
                 private fun matchCondThen(

@@ -10,6 +10,8 @@ import com.intellij.execution.runners.ProgramRunner
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.progress.PerformInBackgroundOption
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -108,8 +110,14 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
+                EditorFactory.getInstance().allEditors.forEach {
+                    it.editorKind
+                }
                 ProgressManager.getInstance()
-                    .run(object : Task.Modal(configuration.project, "Gathering coverage...", false) {
+                    .run(object : Task.Backgroundable(
+                        configuration.project, "Gathering coverage...", false,
+                        PerformInBackgroundOption.DEAF
+                    ) {
                         override fun run(indicator: ProgressIndicator) {
                             indicator.isIndeterminate = true
                             val data =
