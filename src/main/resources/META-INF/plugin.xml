@@ -13,9 +13,9 @@
     -->
 
     <change-notes><![CDATA[
-            2020.1.0: <br/>
-      Fixed Exception with GCC >= 10 <br/>
-      Fixed Accidental deletion of the coverage action icon.
+            2020.1.1: <br/>
+      Added compatibility for clang-cl including demangling using llvm-undname <br/>
+      Made coverage gathering a background operation resolving some deadlocks.
     ]]></change-notes>
 
     <description><![CDATA[
