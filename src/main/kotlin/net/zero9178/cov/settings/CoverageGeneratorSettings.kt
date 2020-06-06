@@ -3,6 +3,8 @@ package net.zero9178.cov.settings
 import com.intellij.ide.AppLifecycleListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.*
 import com.jetbrains.cidr.toolchains.OSType
@@ -156,21 +158,27 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
                 }
 
                 override fun toolchainCMakeEnvironmentChanged(toolchains: MutableSet<CPPToolchains.Toolchain>) {
-                    toolchains.groupBy {
-                        CPPToolchains.getInstance().toolchains.contains(it)
-                    }.forEach { group ->
-                        if (group.key) {
-                            group.value.forEach {
-                                val path = guessCoverageGeneratorForToolchain(it)
-                                myState.paths[it.name] = path
-                                generateGeneratorFor(it.name, path)
-                            }
-                        } else {
-                            group.value.forEach {
-                                myState.paths.remove(it.name)
-                                myGenerators.remove(it.name)
+                    try {
+                        toolchains.groupBy {
+                            CPPToolchains.getInstance().toolchains.contains(it)
+                        }.forEach { group ->
+                            if (group.key) {
+                                group.value.forEach {
+                                    val path = guessCoverageGeneratorForToolchain(it)
+                                    myState.paths[it.name] = path
+                                    generateGeneratorFor(it.name, path)
+                                }
+                            } else {
+                                group.value.forEach {
+                                    myState.paths.remove(it.name)
+                                    myGenerators.remove(it.name)
+                                }
                             }
                         }
+                    } catch (e: ProcessCanceledException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log.error(e)
                     }
                 }
             })
@@ -179,6 +187,8 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
 
     companion object {
         fun getInstance() = service<CoverageGeneratorSettings>()
+
+        val log = Logger.getInstance(CoverageGeneratorSettings::class.java)
     }
 
     class Registrator : AppLifecycleListener {
@@ -193,8 +203,8 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
     var compiler =
         toolchain.customCXXCompilerPath
             ?: if (toolset !is WSL) System.getenv("CXX")?.ifBlank { System.getenv("CC") } else null
-    val findExe = { prefix: String, name: String, suffix: String, extraPath: Path ->
-        val insideSameDir = extraPath.toFile().listFiles()?.asSequence()?.map {
+    val findExe = { prefix: String, name: String, suffix: String, extraPath: Path? ->
+        val insideSameDir = extraPath?.toFile()?.listFiles()?.asSequence()?.map {
             "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
         }?.filterNotNull()?.maxBy {
             it.value.length
