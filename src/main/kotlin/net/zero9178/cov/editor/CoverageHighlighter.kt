@@ -1,7 +1,7 @@
 package net.zero9178.cov.editor
 
-import com.intellij.codeInsight.highlighting.HighlightManager
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.*
@@ -9,9 +9,7 @@ import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
-import com.intellij.openapi.editor.markup.EffectType
-import com.intellij.openapi.editor.markup.RangeHighlighter
-import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.editor.markup.*
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.util.IconUtil
@@ -20,7 +18,12 @@ import net.zero9178.cov.data.FunctionLineData
 import net.zero9178.cov.data.FunctionRegionData
 import java.awt.*
 
-class CoverageHighlighter(private val myProject: Project) {
+class CoverageHighlighter(private val myProject: Project) : Disposable {
+
+    companion object {
+        fun getInstance(project: Project) = project.service<CoverageHighlighter>()
+    }
+
     init {
         EditorFactory.getInstance().addEditorFactoryListener(object : EditorFactoryListener {
             override fun editorCreated(event: EditorFactoryEvent) {
@@ -30,11 +33,11 @@ class CoverageHighlighter(private val myProject: Project) {
                 }
                 applyOnEditor(editor)
             }
-        }, myProject)
+        }, this)
     }
 
     private fun applyOnEditor(editor: Editor) {
-        val highlightManager = HighlightManager.getInstance(myProject)
+        val markupModel = editor.markupModel
         val colorScheme = EditorColorsUtil.getGlobalOrDefaultColorScheme()
         val vs = FileDocumentManager.getInstance().getFile(editor.document) ?: return
         val path = vs.path
@@ -47,13 +50,12 @@ class CoverageHighlighter(private val myProject: Project) {
                         CodeInsightColors.LINE_FULL_COVERAGE
                     else CodeInsightColors.LINE_NONE_COVERAGE
                 ).foregroundColor
-            highlightManager.addRangeHighlight(
-                editor,
+            ranges += markupModel.addRangeHighlighter(
                 editor.logicalPositionToOffset(start),
                 editor.logicalPositionToOffset(end),
+                HighlighterLayer.SELECTION - 1,
                 TextAttributes(null, colour, null, EffectType.SEARCH_MATCH, Font.PLAIN),
-                false,
-                ranges
+                HighlighterTargetArea.EXACT_RANGE
             )
         }
 
@@ -101,7 +103,6 @@ class CoverageHighlighter(private val myProject: Project) {
 
     fun setCoverageData(coverageData: CoverageData?) {
         myHighlighting.clear()
-        val highlightManager = HighlightManager.getInstance(myProject)
         myActiveHighlighting.forEach { (t, u) ->
             val editor = EditorFactory.getInstance().allEditors.find {
                 val vs = FileDocumentManager.getInstance().getFile(it.document) ?: return@find false
@@ -111,7 +112,7 @@ class CoverageHighlighter(private val myProject: Project) {
 
             invokeLater {
                 u.forEach {
-                    highlightManager.removeSegmentHighlighter(editor, it)
+                    editor.markupModel.removeHighlighter(it)
                 }
             }
         }
@@ -161,7 +162,5 @@ class CoverageHighlighter(private val myProject: Project) {
         }
     }
 
-    companion object {
-        fun getInstance(project: Project) = project.service<CoverageHighlighter>()
-    }
+    override fun dispose() {}
 }
