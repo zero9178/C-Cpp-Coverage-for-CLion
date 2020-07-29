@@ -13,7 +13,7 @@
     -->
 
     <change-notes><![CDATA[
-            2020.2.2-Eap: <br/>
+            2020.2.2: <br/>
       Fixed a bug where one was unable to apply toolchain settings if a compiler name was didn't have a parent path.<br/>
       Highlighting now doesn't interfere with other editor highlighting like rename refactoring anymore
     ]]></change-notes>

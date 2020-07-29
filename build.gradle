@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'net.zero9178'
-version '2020.2.2-Eap'
+version '2020.2.2'
 
 sourceCompatibility = 1.8
 
@@ -26,7 +26,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version 'CL-202.5103.16-EAP-SNAPSHOT'
+    version 'CL-2020.2'
 }
 runIde {
     jvmArgs '-Xmx2G'
