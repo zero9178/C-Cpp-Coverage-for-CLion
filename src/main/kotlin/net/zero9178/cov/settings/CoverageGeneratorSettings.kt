@@ -206,7 +206,7 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
     val findExe = { prefix: String, name: String, suffix: String, extraPath: Path? ->
         val insideSameDir = extraPath?.toFile()?.listFiles()?.asSequence()?.map {
             "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
-        }?.filterNotNull()?.maxBy {
+        }?.filterNotNull()?.maxByOrNull {
             it.value.length
         }?.value
         when {
@@ -218,9 +218,9 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
                     val result = path.listFiles()?.asSequence()?.map {
                         it to "($prefix)?$name($suffix)?".toRegex().matchEntire(it.name)
                     }?.filter { it.second != null }?.map { it.first to it.second!! }
-                        ?.maxBy { it.second.value.length }
+                        ?.maxByOrNull { it.second.value.length }
                     result
-                }.filterNotNull().maxBy { it.second.value.length }
+                }.filterNotNull().maxByOrNull { it.second.value.length }
                 pair?.first?.absolutePath
             }
             else -> null

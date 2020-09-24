@@ -258,7 +258,7 @@ class LLVMCoverageGenerator(
                     result = mangledNames.map { mangled ->
                         val input =
                             if (mangled.matches("^(_{1,3}Z|\\?).*".toRegex())) mangled else mangled.substringAfter(':')
-                        writer.appendln(input)
+                        writer.appendLine(input)
                         writer.flush()
                         if (isUndname) {
                             if (!isFirst) {
