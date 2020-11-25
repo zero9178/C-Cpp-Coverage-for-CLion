@@ -32,7 +32,7 @@ There you can also configure different settings related to processing coverage
 To compile with coverage each of the two compilers require different flags. In the case of GCC we need the `--coverage` flag
 for the compiler. On some platforms one needs to explicitly link against `gcov`. For clang we need `-fprofile-instr-generate -fcoverage-mapping`
 for compiler flags and `-fprofile-instr-generate` for linker flags. On some platform one may also need to explicitly link 
-again the libclang_rt.profile-\<ARCH\>. An example cmake sections is hown here:
+again the libclang_rt.profile-\<ARCH\>. An example cmake sections is shown here:
 ```cmake
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
