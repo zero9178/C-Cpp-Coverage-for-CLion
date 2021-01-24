@@ -1,11 +1,11 @@
 plugins {
     id 'java'
-    id 'org.jetbrains.intellij' version '0.4.21'
+    id 'org.jetbrains.intellij' version '0.6.5'
     id 'org.jetbrains.kotlin.jvm' version '1.4.0'
 }
 
 group 'net.zero9178'
-version '2020.3.0-Eap'
+version '2020.3.1'
 
 sourceCompatibility = 1.8
 
@@ -26,7 +26,9 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version 'CL-203-EAP-SNAPSHOT'
+    version '2020.3.1'
+    plugins = ['com.intellij.cidr.base','com.intellij.cidr.lang']
+    type 'CL'
 }
 runIde {
     jvmArgs '-Xmx2G'
