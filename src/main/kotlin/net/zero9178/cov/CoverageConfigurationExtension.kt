@@ -127,7 +127,9 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     executionTarget
                                 )
                             val root = DefaultMutableTreeNode("invisible-root")
-                            CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
+                            invokeLater {
+                                CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
+                            }
                             if (data != null) {
                                 for ((_, value) in data.files) {
                                     val fileNode = object : DefaultMutableTreeNode(value) {
