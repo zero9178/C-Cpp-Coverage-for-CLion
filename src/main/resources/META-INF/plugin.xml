@@ -47,7 +47,8 @@ For further details, known issues and differences of compilers see <a href="http
         <projectService serviceImplementation="net.zero9178.cov.window.CoverageViewImpl"
                         serviceInterface="net.zero9178.cov.window.CoverageView"/>
         <applicationService serviceImplementation="net.zero9178.cov.settings.CoverageGeneratorSettings"/>
-        <applicationConfigurable instance="net.zero9178.cov.window.SettingsWindowImpl" displayName="C/C++ Coverage"
+        <applicationConfigurable instance="net.zero9178.cov.window.SettingsWindowImpl"
+                                 displayName="C/C++ Coverage Plugin"
                                  groupId="language"/>
         <toolWindow id="C/C++ Coverage" anchor="right" factoryClass="net.zero9178.cov.window.CoverageWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowCoverage"/>

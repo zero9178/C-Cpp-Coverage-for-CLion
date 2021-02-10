@@ -115,6 +115,8 @@ class SettingsWindowImpl : SettingsWindow() {
             }
         }
 
+        myDocHyperlink.setHyperlinkTarget("https://github.com/zero9178/C-Cpp-Coverage-for-CLion")
+        myDocHyperlink.setTextWithHyperlink("For more information see: <hyperlink>https://github.com/zero9178/C-Cpp-Coverage-for-CLion</hyperlink>")
         myIfBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
         myLoopBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
         myCondBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
