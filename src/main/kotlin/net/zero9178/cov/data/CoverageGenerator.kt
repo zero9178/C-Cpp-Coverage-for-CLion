@@ -64,7 +64,8 @@ fun getGeneratorFor(
             if (maybeOptionalLLVMProf == null) {
                 return null to "No llvm-profdata specified to accompany llvm-cov"
             }
-            return LLVMCoverageGenerator(executable, maybeOptionalLLVMProf, optionalDemangler) to null
+            val majorVersion = extractVersion(lines[1]).first
+            return LLVMCoverageGenerator(majorVersion, executable, maybeOptionalLLVMProf, optionalDemangler) to null
         }
         lines[0].contains("gcov", true) -> {
             val version = extractVersion(lines[0])

@@ -34,6 +34,7 @@ import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
+    private val myMajorVersion: Int,
     private val myLLVMCov: String,
     private val myLLVMProf: String,
     private val myDemangler: String?
@@ -135,7 +136,7 @@ class LLVMCoverageGenerator(
             }.map {
                 it.path
             }.toHashSet()
-        } ?: emptySet<String>()
+        } ?: emptySet()
 
         val filesMap = root.data.flatMap { data ->
             //Associates the filename with a list of all functions in that file
@@ -165,7 +166,7 @@ class LLVMCoverageGenerator(
 
                             val regions = function.regions.filter {
                                 function.filenames[it.fileId] == file.filename
-                            }.sortedWith(Comparator { lhs, rhs ->
+                            }.sortedWith { lhs, rhs ->
                                 when {
                                     lhs.start != rhs.start -> {
                                         lhs.start.compareTo(rhs.start)
@@ -177,7 +178,7 @@ class LLVMCoverageGenerator(
                                         lhs.regionKind.compareTo(rhs.regionKind)
                                     }
                                 }
-                            })
+                            }
 
                             val nonGaps = regions.filter {
                                 it.regionKind != Region.GAP
@@ -358,7 +359,7 @@ class LLVMCoverageGenerator(
                     val neg = expression.negativeExpression ?: return super.visitConditionalExpression(expression)
                     val quest = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
                         ?: return super.visitConditionalExpression(expression)
-                    matchThenElse(quest.textOffset, pos, neg, false)
+                    matchThenElse(quest.textOffset, pos, neg)
                     super.visitConditionalExpression(expression)
                 }
 
@@ -429,11 +430,10 @@ class LLVMCoverageGenerator(
                 private fun matchThenElse(
                     offset: Int,
                     thenBranch: OCElement,
-                    elseBranch: OCElement,
-                    removeRegions: Boolean = true
+                    elseBranch: OCElement
                 ) {
-                    val thenRegion = find(thenBranch, removeRegions) ?: return
-                    val elseRegion = find(elseBranch, removeRegions) ?: return
+                    val thenRegion = find(thenBranch, false) ?: return
+                    val elseRegion = find(elseBranch, false) ?: return
 
                     val lineNumber = document.getLineNumber(offset)
                     branches += CoverageBranchData(
