@@ -2,16 +2,17 @@ package net.zero9178.cov.editor
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.*
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
+import com.intellij.openapi.editor.ex.MarkupModelEx
 import com.intellij.openapi.editor.markup.*
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.util.IconUtil
 import net.zero9178.cov.data.CoverageData
 import net.zero9178.cov.data.FunctionLineData
@@ -33,6 +34,14 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
                 }
                 applyOnEditor(editor)
             }
+
+            override fun editorReleased(event: EditorFactoryEvent) {
+                val editor = event.editor
+                if (editor.project !== myProject) {
+                    return
+                }
+                removeFromEditor(editor)
+            }
         }, this)
     }
 
@@ -42,7 +51,7 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
         val vs = FileDocumentManager.getInstance().getFile(editor.document) ?: return
         val path = vs.path
         val info = myHighlighting[path] ?: return
-        val ranges = myActiveHighlighting.getOrPut(path) { mutableListOf() }
+        val ranges = myActiveHighlighting.getOrPut(editor) { mutableListOf() }
         for ((start, end, covered) in info.highLightedLines) {
             val colour =
                 colorScheme.getAttributes(
@@ -84,11 +93,27 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
             }
         }
 
-        myActiveInlays += info.branchInfo.map { (startPos, steppedIn, skipped) ->
+        myActiveInlays.getOrPut(editor) { mutableListOf() } += info.branchInfo.map { (startPos, steppedIn, skipped) ->
             editor.inlayModel.addInlineElement(
                 editor.logicalPositionToOffset(startPos),
                 MyEditorCustomElementRenderer(steppedIn && skipped)
             )
+        }
+    }
+
+    private fun removeFromEditor(editor: Editor) {
+        myActiveInlays.remove(editor)?.apply {
+            this.filterNotNull().forEach {
+                Disposer.dispose(it)
+            }
+        }
+        val markupModel = editor.markupModel as? MarkupModelEx ?: return
+        myActiveHighlighting.remove(editor)?.apply {
+            this.filter {
+                markupModel.containsHighlighter(it)
+            }.forEach {
+                markupModel.removeHighlighter(it)
+            }
         }
     }
 
@@ -97,35 +122,19 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
         val branchInfo: List<Triple<LogicalPosition, Boolean, Boolean>>
     )
 
-    private val myActiveInlays: MutableList<Inlay<*>?> = mutableListOf()
-    private val myActiveHighlighting: MutableMap<String, MutableList<RangeHighlighter>> = mutableMapOf()
-    private val myHighlighting: MutableMap<String, HighLightInfo> = mutableMapOf()
+    private val myActiveInlays: MutableMap<Editor, MutableList<Inlay<*>?>> = mutableMapOf()
+    private val myActiveHighlighting: MutableMap<Editor, MutableList<RangeHighlighter>> = mutableMapOf()
+    private var myHighlighting: Map<String, HighLightInfo> = mapOf()
 
     fun setCoverageData(coverageData: CoverageData?) {
-        myHighlighting.clear()
-        myActiveHighlighting.forEach { (t, u) ->
-            val editor = EditorFactory.getInstance().allEditors.find {
-                val vs = FileDocumentManager.getInstance().getFile(it.document) ?: return@find false
-                val canonicalPath = vs.canonicalPath ?: return@find false
-                canonicalPath == t
-            } ?: return@forEach
-
-            invokeLater {
-                u.forEach {
-                    editor.markupModel.removeHighlighter(it)
-                }
-            }
-        }
-        val currentInlays = myActiveInlays.toList()
-        invokeLater {
-            currentInlays.filterNotNull().forEach { it.dispose() }
-        }
+        myHighlighting = mapOf()
+        myActiveHighlighting.keys.union(myActiveInlays.keys).forEach(::removeFromEditor)
         myActiveInlays.clear()
         myActiveHighlighting.clear()
         if (coverageData == null) {
             return
         }
-        for ((name, file) in coverageData.files) {
+        myHighlighting = coverageData.files.mapValues { (_, file) ->
             val lines = file.functions.values.flatMap { functionData ->
                 when (functionData.coverage) {
                     is FunctionLineData -> functionData.coverage.data.map {
@@ -153,12 +162,10 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
                     )
                 }
             }.distinctBy { it.first }
-            myHighlighting[name] = HighLightInfo(lines, branches)
+            HighLightInfo(lines, branches)
         }
-        invokeLater {
-            EditorFactory.getInstance().allEditors.forEach {
-                applyOnEditor(it)
-            }
+        EditorFactory.getInstance().allEditors.forEach {
+            applyOnEditor(it)
         }
     }
 
