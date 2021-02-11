@@ -13,9 +13,9 @@
     -->
 
     <change-notes><![CDATA[
-            2020.2.2: <br/>
-      Fixed a bug where one was unable to apply toolchain settings if a compiler name was didn't have a parent path.<br/>
-      Highlighting now doesn't interfere with other editor highlighting like rename refactoring anymore
+            2021.1.2: <br/>
+      Fixed exceptions when clearing highlighting and branch coverage annotations<br/>
+      Differentiate in menus and tooltips that a functionality is from the C/C++ Coverage plugin instead of CLion
     ]]></change-notes>
 
     <description><![CDATA[
