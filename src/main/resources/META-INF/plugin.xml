@@ -23,7 +23,7 @@ C and C++ Line, Region and Branch Coverage gatherer for GCC and Clang. Automatic
 and displays it in editor and a statistic window. To use compile with --coverage and link against gcov when using GCC or
 compile with -fprofile-instr-generate -fcoverage-mapping and use linker option -fprofile-instr-generate when using Clang.
 <br/>
-For further details, known issues and differences of compilers see <a href="https://github.com/zero9178/GCoverage4CLion/blob/master/README.md">https://github.com/zero9178/GCoverage4CLion/blob/master/README.md</a>
+For further details, known issues and differences of compilers see <a href="https://github.com/zero9178/C-Cpp-Coverage-for-CLion/blob/master/README.md">https://github.com/zero9178/C-Cpp-Coverage-for-CLion/blob/master/README.md</a>
     ]]></description>
 
     <depends>com.intellij.modules.clion</depends>
