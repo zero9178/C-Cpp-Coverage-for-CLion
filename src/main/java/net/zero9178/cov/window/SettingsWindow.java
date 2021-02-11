@@ -4,6 +4,7 @@ import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.ui.AnimatedIcon;
+import com.intellij.ui.HyperlinkLabel;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBLabel;
 import org.jetbrains.annotations.NotNull;
@@ -29,6 +30,7 @@ public abstract class SettingsWindow implements Configurable {
     protected JCheckBox myDoBranchCoverage;
     protected JBCheckBox myCondBranchCoverage;
     protected JCheckBox myCalculateExternal;
+    protected HyperlinkLabel myDocHyperlink;
 
     protected void setLoading(boolean loading) {
         myLoading.setIcon(loading ? new AnimatedIcon.Default() : null);

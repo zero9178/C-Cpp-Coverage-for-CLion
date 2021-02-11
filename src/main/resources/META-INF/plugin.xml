@@ -4,7 +4,7 @@
     <vendor email="z3r09178@gmail.com" url="https://github.com/zero9178/C-Cpp-Coverage-for-CLion"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
-    <idea-version since-build="202.5103"/>
+    <idea-version since-build="203.6682"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
@@ -13,9 +13,9 @@
     -->
 
     <change-notes><![CDATA[
-            2020.2.2: <br/>
-      Fixed a bug where one was unable to apply toolchain settings if a compiler name was didn't have a parent path.<br/>
-      Highlighting now doesn't interfere with other editor highlighting like rename refactoring anymore
+            2020.3.1: <br/>
+      Fixed exceptions when clearing highlighting and branch coverage annotations<br/>
+      Differentiate in menus and tooltips that a functionality is from the C/C++ Coverage plugin instead of CLion
     ]]></change-notes>
 
     <description><![CDATA[
@@ -23,7 +23,7 @@ C and C++ Line, Region and Branch Coverage gatherer for GCC and Clang. Automatic
 and displays it in editor and a statistic window. To use compile with --coverage and link against gcov when using GCC or
 compile with -fprofile-instr-generate -fcoverage-mapping and use linker option -fprofile-instr-generate when using Clang.
 <br/>
-For further details, known issues and differences of compilers see <a href="https://github.com/zero9178/GCoverage4CLion/blob/master/README.md">https://github.com/zero9178/GCoverage4CLion/blob/master/README.md</a>
+For further details, known issues and differences of compilers see <a href="https://github.com/zero9178/C-Cpp-Coverage-for-CLion/blob/master/README.md">https://github.com/zero9178/C-Cpp-Coverage-for-CLion/blob/master/README.md</a>
     ]]></description>
 
     <depends>com.intellij.modules.clion</depends>
@@ -47,7 +47,8 @@ For further details, known issues and differences of compilers see <a href="http
         <projectService serviceImplementation="net.zero9178.cov.window.CoverageViewImpl"
                         serviceInterface="net.zero9178.cov.window.CoverageView"/>
         <applicationService serviceImplementation="net.zero9178.cov.settings.CoverageGeneratorSettings"/>
-        <applicationConfigurable instance="net.zero9178.cov.window.SettingsWindowImpl" displayName="C/C++ Coverage"
+        <applicationConfigurable instance="net.zero9178.cov.window.SettingsWindowImpl"
+                                 displayName="C/C++ Coverage Plugin"
                                  groupId="language"/>
         <toolWindow id="C/C++ Coverage" anchor="right" factoryClass="net.zero9178.cov.window.CoverageWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowCoverage"/>
