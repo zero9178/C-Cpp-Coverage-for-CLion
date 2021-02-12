@@ -76,7 +76,7 @@ class LLVMCoverageGenerator(
         val count: Long,
         val regions: List<Region>,
         val filenames: List<String>,
-        val branches: List<Branch> = emptyList()
+        val branches: List<Branch>? = null
     )
 
     private data class Region(
@@ -241,12 +241,25 @@ class LLVMCoverageGenerator(
                                 if (CoverageGeneratorSettings.getInstance()
                                         .branchCoverageEnabled
                                 )
-                                    findStatementsForBranches(
-                                        regions.first().start, regions.last().end,
-                                        nonGaps.toMutableList(),
-                                        environment.toLocalPath(file.filename),
-                                        project
-                                    ) else emptyList()
+                                    if (function.branches == null)
+                                        findStatementsForBranches(
+                                            regions.first().start, regions.last().end,
+                                            nonGaps.toMutableList(),
+                                            environment.toLocalPath(file.filename),
+                                            project
+                                        )
+                                    else {
+                                        function.branches.filter {
+                                            function.filenames[it.fileId] == file.filename
+                                        }.map {
+                                            CoverageBranchData(
+                                                it.start,
+                                                it.executionCount.toInt(),
+                                                it.falseExecutionCount.toInt()
+                                            )
+                                        }
+                                    }
+                                else emptyList()
                             )
                         }
                     }
