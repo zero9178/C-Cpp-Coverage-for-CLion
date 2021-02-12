@@ -161,6 +161,7 @@ class LLVMCoverageGenerator(
         val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
         val demangledNames = demangle(environment, mangledNames)
 
+        val processDataStart = System.nanoTime()
         val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
             ModuleRootManager.getInstance(module).contentEntries.flatMap {
                 it.sourceFolderFiles.toList()
@@ -214,6 +215,7 @@ class LLVMCoverageGenerator(
 
             }
         }.associateBy { it.filePath }
+        log.info("Processing coverage data took ${System.nanoTime() - processDataStart}ns")
         return CoverageData(
             filesMap,
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
@@ -304,6 +306,7 @@ class LLVMCoverageGenerator(
             return emptyMap()
         }
         return if (myDemangler != null) {
+            val demangleStart = System.nanoTime()
             val isUndname = myDemangler.contains("undname")
             val p = environment.hostMachine.createProcess(
                 GeneralCommandLine(listOf(myDemangler) + if (isUndname) listOf("--no-calling-convention") else emptyList()).withRedirectErrorStream(
@@ -340,6 +343,7 @@ class LLVMCoverageGenerator(
                 }
             }
             p.destroyProcess()
+            log.info("Demangling took ${System.nanoTime() - demangleStart}ns")
             mangledNames.zip(result).associate { it }
         } else {
             mangledNames.associateBy { it }
@@ -520,6 +524,7 @@ class LLVMCoverageGenerator(
         val files = config.configurationGenerationDir.listFiles()
             ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
 
+        val profdataStart = System.nanoTime()
         val p = environment.hostMachine.createProcess(
             GeneralCommandLine(listOf(
                 myLLVMProf,
@@ -543,9 +548,11 @@ class LLVMCoverageGenerator(
             Notifications.Bus.notify(notification, configuration.project)
             return null
         }
+        log.info("LLVM profdata took ${System.nanoTime() - profdataStart}ns")
 
         files.forEach { it.delete() }
 
+        val covStart = System.nanoTime()
         val input = listOf(
             myLLVMCov,
             "export",
@@ -575,6 +582,7 @@ class LLVMCoverageGenerator(
             Notifications.Bus.notify(notification, configuration.project)
             return null
         }
+        log.info("LLVM cov took ${System.nanoTime() - covStart}ns")
 
         return processJson(lines.joinToString(), environment, configuration.project)
     }
