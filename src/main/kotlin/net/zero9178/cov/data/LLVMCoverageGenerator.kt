@@ -42,6 +42,10 @@ class LLVMCoverageGenerator(
 
     companion object {
         val log = Logger.getInstance(LLVMCoverageGenerator::class.java)
+        const val CODE = 0
+        const val EXPANSION = 1
+        const val SKIPPED = 2
+        const val GAP = 3
     }
 
     override fun patchEnvironment(
@@ -71,21 +75,25 @@ class LLVMCoverageGenerator(
         val name: String,
         val count: Long,
         val regions: List<Region>,
-        val filenames: List<String>
+        val filenames: List<String>,
+        val branches: List<Branch> = emptyList()
     )
 
     private data class Region(
         val start: ComparablePair<Int, Int>,
         val end: ComparablePair<Int, Int>,
         val executionCount: Long, val fileId: Int, val expandedFileId: Int, val regionKind: Int
-    ) {
-        companion object {
-            const val CODE = 0
-            const val EXPANSION = 1
-            const val SKIPPED = 2
-            const val GAP = 3
-        }
-    }
+    )
+
+    private data class Branch(
+        val start: ComparablePair<Int, Int>,
+        val end: ComparablePair<Int, Int>,
+        val executionCount: Long,
+        val falseExecutionCount: Long,
+        val fileId: Int,
+        val expandedFileId: Int,
+        val regionKind: Int
+    )
 
     private fun processJson(
         jsonContent: String,
@@ -114,6 +122,29 @@ class LLVMCoverageGenerator(
                 val region = value as? Region ?: return ""
                 return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
                         "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
+            }
+        }).converter(object : Converter {
+            override fun canConvert(cls: Class<*>) = cls == Branch::class.java
+
+            override fun fromJson(jv: JsonValue): Any? {
+                val array = jv.array ?: return null
+                return Branch(
+                    (array[0] as Number).toInt() toCP
+                            (array[1] as Number).toInt(),
+                    (array[2] as Number).toInt() toCP
+                            (array[3] as Number).toInt(),
+                    (array[4] as Number).toLong(),
+                    (array[5] as Number).toLong(),
+                    (array[6] as Number).toInt(),
+                    (array[7] as Number).toInt(),
+                    (array[8] as Number).toInt()
+                )
+            }
+
+            override fun toJson(value: Any): String {
+                val region = value as? Branch ?: return ""
+                return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
+                        "${region.executionCount},${region.falseExecutionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
             }
         }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
             ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
@@ -181,7 +212,7 @@ class LLVMCoverageGenerator(
                             }
 
                             val nonGaps = regions.filter {
-                                it.regionKind != Region.GAP
+                                it.regionKind != GAP
                             }
 
                             if (regions.isEmpty()) {
@@ -194,9 +225,9 @@ class LLVMCoverageGenerator(
                                     region.end,
                                     region.executionCount,
                                     when (region.regionKind) {
-                                        Region.GAP -> FunctionRegionData.Region.Kind.Gap
-                                        Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
-                                        Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                                        GAP -> FunctionRegionData.Region.Kind.Gap
+                                        SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                                        EXPANSION -> FunctionRegionData.Region.Kind.Expanded
                                         else -> FunctionRegionData.Region.Kind.Code
                                     }
                                 )
@@ -473,9 +504,11 @@ class LLVMCoverageGenerator(
         var lines = p.process.errorStream.bufferedReader().readLines()
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-profdata returned error code $retCode with error output:\n${lines.joinToString(
-                    "\n"
-                )}", NotificationType.ERROR
+                "llvm-profdata returned error code $retCode with error output:\n${
+                    lines.joinToString(
+                        "\n"
+                    )
+                }", NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)
             return null
