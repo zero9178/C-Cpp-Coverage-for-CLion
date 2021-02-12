@@ -34,6 +34,7 @@ import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
+    private val myMajorVersion: Int,
     private val myLLVMCov: String,
     private val myLLVMProf: String,
     private val myDemangler: String?
@@ -41,6 +42,10 @@ class LLVMCoverageGenerator(
 
     companion object {
         val log = Logger.getInstance(LLVMCoverageGenerator::class.java)
+        const val CODE = 0
+        const val EXPANSION = 1
+        const val SKIPPED = 2
+        const val GAP = 3
     }
 
     override fun patchEnvironment(
@@ -70,21 +75,25 @@ class LLVMCoverageGenerator(
         val name: String,
         val count: Long,
         val regions: List<Region>,
-        val filenames: List<String>
+        val filenames: List<String>,
+        val branches: List<Branch>? = null
     )
 
     private data class Region(
         val start: ComparablePair<Int, Int>,
         val end: ComparablePair<Int, Int>,
         val executionCount: Long, val fileId: Int, val expandedFileId: Int, val regionKind: Int
-    ) {
-        companion object {
-            const val CODE = 0
-            const val EXPANSION = 1
-            const val SKIPPED = 2
-            const val GAP = 3
-        }
-    }
+    )
+
+    private data class Branch(
+        val start: ComparablePair<Int, Int>,
+        val end: ComparablePair<Int, Int>,
+        val executionCount: Long,
+        val falseExecutionCount: Long,
+        val fileId: Int,
+        val expandedFileId: Int,
+        val regionKind: Int
+    )
 
     private fun processJson(
         jsonContent: String,
@@ -114,6 +123,29 @@ class LLVMCoverageGenerator(
                 return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
                         "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
             }
+        }).converter(object : Converter {
+            override fun canConvert(cls: Class<*>) = cls == Branch::class.java
+
+            override fun fromJson(jv: JsonValue): Any? {
+                val array = jv.array ?: return null
+                return Branch(
+                    (array[0] as Number).toInt() toCP
+                            (array[1] as Number).toInt(),
+                    (array[2] as Number).toInt() toCP
+                            (array[3] as Number).toInt(),
+                    (array[4] as Number).toLong(),
+                    (array[5] as Number).toLong(),
+                    (array[6] as Number).toInt(),
+                    (array[7] as Number).toInt(),
+                    (array[8] as Number).toInt()
+                )
+            }
+
+            override fun toJson(value: Any): String {
+                val region = value as? Branch ?: return ""
+                return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
+                        "${region.executionCount},${region.falseExecutionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
+            }
         }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
             ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
         log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
@@ -135,7 +167,7 @@ class LLVMCoverageGenerator(
             }.map {
                 it.path
             }.toHashSet()
-        } ?: emptySet<String>()
+        } ?: emptySet()
 
         val filesMap = root.data.flatMap { data ->
             //Associates the filename with a list of all functions in that file
@@ -155,70 +187,25 @@ class LLVMCoverageGenerator(
                     return@fileFold result
                 }
 
-                val activeCount = Thread.activeCount()
-                val functionsMap = funcMap.getOrDefault(
+                val llvmFunctions = funcMap.getOrDefault(
                     file.filename,
                     emptyList()
-                ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                    CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
-                        functions.fold(emptyList()) { result, function ->
+                )
 
-                            val regions = function.regions.filter {
-                                function.filenames[it.fileId] == file.filename
-                            }.sortedWith(Comparator { lhs, rhs ->
-                                when {
-                                    lhs.start != rhs.start -> {
-                                        lhs.start.compareTo(rhs.start)
-                                    }
-                                    lhs.end != rhs.end -> {
-                                        lhs.end.compareTo(rhs.end)
-                                    }
-                                    else -> {
-                                        lhs.regionKind.compareTo(rhs.regionKind)
-                                    }
-                                }
-                            })
-
-                            val nonGaps = regions.filter {
-                                it.regionKind != Region.GAP
-                            }
-
-                            if (regions.isEmpty()) {
-                                return@fold result
-                            }
-
-                            val functionRegions = regions.map { region ->
-                                FunctionRegionData.Region(
-                                    region.start,
-                                    region.end,
-                                    region.executionCount,
-                                    when (region.regionKind) {
-                                        Region.GAP -> FunctionRegionData.Region.Kind.Gap
-                                        Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
-                                        Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
-                                        else -> FunctionRegionData.Region.Kind.Code
-                                    }
-                                )
-                            }
-
-                            result + CoverageFunctionData(
-                                regions.first().start.first,
-                                regions.first().end.first,
-                                demangledNames[function.name] ?: function.name,
-                                FunctionRegionData(functionRegions),
-                                if (CoverageGeneratorSettings.getInstance()
-                                        .branchCoverageEnabled
-                                )
-                                    findStatementsForBranches(
-                                        regions.first().start, regions.last().end,
-                                        nonGaps.toMutableList(),
-                                        environment.toLocalPath(file.filename),
-                                        project
-                                    ) else emptyList()
-                            )
+                val functionsMap = if (myMajorVersion >= 12) {
+                    processFunctions(environment, project, demangledNames, file, llvmFunctions)
+                } else {
+                    llvmFunctions.chunked(
+                        ceil(
+                            data.files.size / Thread.activeCount()
+                                .toDouble()
+                        ).toInt()
+                    ).map { functions ->
+                        CompletableFuture.supplyAsync {
+                            processFunctions(environment, project, demangledNames, file, functions)
                         }
-                    }
-                }.flatMap { it.get() }.associateBy { it.functionName }
+                    }.flatMap { it.get() }
+                }.associateBy { it.functionName }
 
                 result + CoverageFileData(
                     filePath,
@@ -231,6 +218,81 @@ class LLVMCoverageGenerator(
             filesMap,
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
             CoverageGeneratorSettings.getInstance().calculateExternalSources
+        )
+    }
+
+    private fun processFunctions(
+        environment: CPPEnvironment,
+        project: Project,
+        demangledNames: Map<String, String>,
+        file: File,
+        functions: List<Function>
+    ): List<CoverageFunctionData> = functions.fold(emptyList()) { result, function ->
+
+        val regions = function.regions.filter {
+            function.filenames[it.fileId] == file.filename
+        }.sortedWith { lhs, rhs ->
+            when {
+                lhs.start != rhs.start -> {
+                    lhs.start.compareTo(rhs.start)
+                }
+                lhs.end != rhs.end -> {
+                    lhs.end.compareTo(rhs.end)
+                }
+                else -> {
+                    lhs.regionKind.compareTo(rhs.regionKind)
+                }
+            }
+        }
+
+        if (regions.isEmpty()) {
+            return@fold result
+        }
+
+        val functionRegions = regions.map { region ->
+            FunctionRegionData.Region(
+                region.start,
+                region.end,
+                region.executionCount,
+                when (region.regionKind) {
+                    GAP -> FunctionRegionData.Region.Kind.Gap
+                    SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                    EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                    else -> FunctionRegionData.Region.Kind.Code
+                }
+            )
+        }
+
+        result + CoverageFunctionData(
+            regions.first().start.first,
+            regions.first().end.first,
+            demangledNames[function.name] ?: function.name,
+            FunctionRegionData(functionRegions),
+            if (CoverageGeneratorSettings.getInstance()
+                    .branchCoverageEnabled
+            )
+                if (function.branches == null) {
+                    val nonGaps = regions.filter {
+                        it.regionKind != GAP
+                    }
+                    findStatementsForBranches(
+                        regions.first().start, regions.last().end,
+                        nonGaps.toMutableList(),
+                        environment.toLocalPath(file.filename),
+                        project
+                    )
+                } else {
+                    function.branches.filter {
+                        function.filenames[it.fileId] == file.filename
+                    }.map {
+                        CoverageBranchData(
+                            it.start,
+                            it.executionCount.toInt(),
+                            it.falseExecutionCount.toInt()
+                        )
+                    }
+                }
+            else emptyList()
         )
     }
 
@@ -358,7 +420,7 @@ class LLVMCoverageGenerator(
                     val neg = expression.negativeExpression ?: return super.visitConditionalExpression(expression)
                     val quest = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
                         ?: return super.visitConditionalExpression(expression)
-                    matchThenElse(quest.textOffset, pos, neg, false)
+                    matchThenElse(quest.textOffset, pos, neg)
                     super.visitConditionalExpression(expression)
                 }
 
@@ -429,11 +491,10 @@ class LLVMCoverageGenerator(
                 private fun matchThenElse(
                     offset: Int,
                     thenBranch: OCElement,
-                    elseBranch: OCElement,
-                    removeRegions: Boolean = true
+                    elseBranch: OCElement
                 ) {
-                    val thenRegion = find(thenBranch, removeRegions) ?: return
-                    val elseRegion = find(elseBranch, removeRegions) ?: return
+                    val thenRegion = find(thenBranch, false) ?: return
+                    val elseRegion = find(elseBranch, false) ?: return
 
                     val lineNumber = document.getLineNumber(offset)
                     branches += CoverageBranchData(
@@ -473,9 +534,11 @@ class LLVMCoverageGenerator(
         var lines = p.process.errorStream.bufferedReader().readLines()
         if (retCode != 0) {
             val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-profdata returned error code $retCode with error output:\n${lines.joinToString(
-                    "\n"
-                )}", NotificationType.ERROR
+                "llvm-profdata returned error code $retCode with error output:\n${
+                    lines.joinToString(
+                        "\n"
+                    )
+                }", NotificationType.ERROR
             )
             Notifications.Bus.notify(notification, configuration.project)
             return null
