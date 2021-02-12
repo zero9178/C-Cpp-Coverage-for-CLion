@@ -52,6 +52,7 @@ For further details, known issues and differences of compilers see <a href="http
                                  groupId="language"/>
         <toolWindow id="C/C++ Coverage" anchor="right" factoryClass="net.zero9178.cov.window.CoverageWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowCoverage"/>
+        <notificationGroup displayType="BALLOON" id="C/C++ Coverage Notification"/>
         <!-- Add your extensions here -->
     </extensions>
 
