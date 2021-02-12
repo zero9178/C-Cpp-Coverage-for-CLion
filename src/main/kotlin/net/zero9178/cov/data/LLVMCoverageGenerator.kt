@@ -5,8 +5,8 @@ import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.DumbService
@@ -25,7 +25,6 @@ import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
-import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
 import net.zero9178.cov.util.toCP
@@ -538,14 +537,15 @@ class LLVMCoverageGenerator(
         var retCode = p.process.waitFor()
         var lines = p.process.errorStream.bufferedReader().readLines()
         if (retCode != 0) {
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-profdata returned error code $retCode with error output:\n${
-                    lines.joinToString(
-                        "\n"
-                    )
-                }", NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
+                    "llvm-profdata returned error code $retCode with error output:\n${
+                        lines.joinToString(
+                            "\n"
+                        )
+                    }",
+                    NotificationType.ERROR
+                ).notify(configuration.project)
             return null
         }
         log.info("LLVM profdata took ${System.nanoTime() - profdataStart}ns")
@@ -573,13 +573,13 @@ class LLVMCoverageGenerator(
         retCode = llvmCov.exitCode
         if (retCode != 0) {
             val errorOutput = llvmCov.stderrLines
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-cov returned error code $retCode",
-                "Invocation and error output:",
-                "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
-                NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
+                    "llvm-cov returned error code $retCode",
+                    "Invocation and error output:",
+                    "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
+                    NotificationType.ERROR
+                ).notify(configuration.project)
             return null
         }
         log.info("LLVM cov took ${System.nanoTime() - covStart}ns")

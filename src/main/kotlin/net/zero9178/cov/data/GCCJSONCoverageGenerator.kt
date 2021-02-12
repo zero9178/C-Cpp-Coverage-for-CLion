@@ -7,8 +7,8 @@ import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.DumbService
@@ -26,7 +26,6 @@ import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCRecursiveVisitor
-import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
@@ -520,13 +519,13 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         val lines = p.stdoutLines
         val retCode = p.exitCode
         if (retCode != 0) {
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "gcov returned error code $retCode",
-                "Invocation and error output:",
-                "Invocation: ${command.joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
-                NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
+                    "gcov returned error code $retCode",
+                    "Invocation and error output:",
+                    "Invocation: ${command.joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
+                    NotificationType.ERROR
+                ).notify(configuration.project)
             return null
         }
 

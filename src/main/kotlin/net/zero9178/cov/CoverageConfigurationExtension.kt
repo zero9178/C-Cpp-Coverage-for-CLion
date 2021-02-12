@@ -7,8 +7,8 @@ import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ProgramRunner
+import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.progress.PerformInBackgroundOption
@@ -31,7 +31,6 @@ import net.zero9178.cov.data.CoverageFileData
 import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.CoverageGenerator
 import net.zero9178.cov.editor.CoverageHighlighter
-import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.window.CoverageView
 import java.nio.file.Paths
@@ -180,23 +179,21 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
     ): CoverageGenerator? {
         val generator = CoverageGeneratorSettings.getInstance().getGeneratorFor(environment.toolchain.name)
         if (generator == null) {
-            val notification =
-                CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
                     "Neither gcov nor llvm-cov specified for ${environment.toolchain.name}",
                     NotificationType.ERROR
-                )
-            Notifications.Bus.notify(notification, configuration.project)
+                ).notify(configuration.project)
             return null
         }
         val coverageGenerator = generator.first
         if (coverageGenerator == null) {
             if (generator.second != null) {
-                val notification =
-                    CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
+                NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                    .createNotification(
                         "Coverage could not be generated due to following error: ${generator.second}",
                         NotificationType.ERROR
-                    )
-                Notifications.Bus.notify(notification, configuration.project)
+                    ).notify(configuration.project)
             }
             return null
         }
