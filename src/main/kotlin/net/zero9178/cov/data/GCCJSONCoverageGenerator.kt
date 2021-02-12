@@ -460,18 +460,23 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     ): CoverageData {
 
         val root = jsonContents.map {
-            CompletableFuture.supplyAsync<List<File>> {
+            CompletableFuture.supplyAsync {
                 val root = Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)
                     ?: return@supplyAsync emptyList()
                 val cwd = root.currentWorkingDirectory.replace(
                     '\n',
                     '\\'
                 )//For some reason gcov uses \n instead of \\ on Windows?!
+
                 root.files.map {
                     File(
-                        if (Paths.get(it.file).isAbsolute) it.file else Paths.get(cwd).resolve(it.file).toRealPath(
-                            LinkOption.NOFOLLOW_LINKS
-                        ).toString(),
+                        if (Paths.get(env.toLocalPath(it.file)).isAbsolute) it.file else Paths.get(env.toLocalPath(cwd))
+                            .resolve(env.toLocalPath(it.file))
+                            .toRealPath(
+                                LinkOption.NOFOLLOW_LINKS
+                            ).toString().run {
+                                env.toEnvPath(this)
+                            },
                         it.functions,
                         it.lines
                     )
