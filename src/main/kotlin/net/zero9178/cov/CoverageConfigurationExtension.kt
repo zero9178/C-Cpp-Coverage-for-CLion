@@ -110,7 +110,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                 "Missing compilation flags",
                                 "Compiler flags for generating coverage are missing.\n"
                                         + "Would you like to create a new profile with them now?\n<a href=\"\"" +
-                                        ">Add</a>", NotificationType.ERROR
+                                        ">Create</a>", NotificationType.ERROR
                             ) { _, hyperlinkEvent ->
                                 if (hyperlinkEvent.eventType == HyperlinkEvent.EventType.ACTIVATED) {
                                     if (!installer.install(
