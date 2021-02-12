@@ -187,83 +187,25 @@ class LLVMCoverageGenerator(
                     return@fileFold result
                 }
 
-                val activeCount = Thread.activeCount()
-                val functionsMap = funcMap.getOrDefault(
+                val llvmFunctions = funcMap.getOrDefault(
                     file.filename,
                     emptyList()
-                ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                    CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
-                        functions.fold(emptyList()) { result, function ->
+                )
 
-                            val regions = function.regions.filter {
-                                function.filenames[it.fileId] == file.filename
-                            }.sortedWith { lhs, rhs ->
-                                when {
-                                    lhs.start != rhs.start -> {
-                                        lhs.start.compareTo(rhs.start)
-                                    }
-                                    lhs.end != rhs.end -> {
-                                        lhs.end.compareTo(rhs.end)
-                                    }
-                                    else -> {
-                                        lhs.regionKind.compareTo(rhs.regionKind)
-                                    }
-                                }
-                            }
-
-                            val nonGaps = regions.filter {
-                                it.regionKind != GAP
-                            }
-
-                            if (regions.isEmpty()) {
-                                return@fold result
-                            }
-
-                            val functionRegions = regions.map { region ->
-                                FunctionRegionData.Region(
-                                    region.start,
-                                    region.end,
-                                    region.executionCount,
-                                    when (region.regionKind) {
-                                        GAP -> FunctionRegionData.Region.Kind.Gap
-                                        SKIPPED -> FunctionRegionData.Region.Kind.Skipped
-                                        EXPANSION -> FunctionRegionData.Region.Kind.Expanded
-                                        else -> FunctionRegionData.Region.Kind.Code
-                                    }
-                                )
-                            }
-
-                            result + CoverageFunctionData(
-                                regions.first().start.first,
-                                regions.first().end.first,
-                                demangledNames[function.name] ?: function.name,
-                                FunctionRegionData(functionRegions),
-                                if (CoverageGeneratorSettings.getInstance()
-                                        .branchCoverageEnabled
-                                )
-                                    if (function.branches == null)
-                                        findStatementsForBranches(
-                                            regions.first().start, regions.last().end,
-                                            nonGaps.toMutableList(),
-                                            environment.toLocalPath(file.filename),
-                                            project
-                                        )
-                                    else {
-                                        function.branches.filter {
-                                            function.filenames[it.fileId] == file.filename
-                                        }.map {
-                                            CoverageBranchData(
-                                                it.start,
-                                                it.executionCount.toInt(),
-                                                it.falseExecutionCount.toInt()
-                                            )
-                                        }
-                                    }
-                                else emptyList()
-                            )
+                val functionsMap = if (myMajorVersion >= 12) {
+                    processFunctions(environment, project, demangledNames, file, llvmFunctions)
+                } else {
+                    llvmFunctions.chunked(
+                        ceil(
+                            data.files.size / Thread.activeCount()
+                                .toDouble()
+                        ).toInt()
+                    ).map { functions ->
+                        CompletableFuture.supplyAsync {
+                            processFunctions(environment, project, demangledNames, file, functions)
                         }
-                    }
-                }.flatMap { it.get() }.associateBy { it.functionName }
+                    }.flatMap { it.get() }
+                }.associateBy { it.functionName }
 
                 result + CoverageFileData(
                     filePath,
@@ -276,6 +218,81 @@ class LLVMCoverageGenerator(
             filesMap,
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
             CoverageGeneratorSettings.getInstance().calculateExternalSources
+        )
+    }
+
+    private fun processFunctions(
+        environment: CPPEnvironment,
+        project: Project,
+        demangledNames: Map<String, String>,
+        file: File,
+        functions: List<Function>
+    ): List<CoverageFunctionData> = functions.fold(emptyList()) { result, function ->
+
+        val regions = function.regions.filter {
+            function.filenames[it.fileId] == file.filename
+        }.sortedWith { lhs, rhs ->
+            when {
+                lhs.start != rhs.start -> {
+                    lhs.start.compareTo(rhs.start)
+                }
+                lhs.end != rhs.end -> {
+                    lhs.end.compareTo(rhs.end)
+                }
+                else -> {
+                    lhs.regionKind.compareTo(rhs.regionKind)
+                }
+            }
+        }
+
+        if (regions.isEmpty()) {
+            return@fold result
+        }
+
+        val functionRegions = regions.map { region ->
+            FunctionRegionData.Region(
+                region.start,
+                region.end,
+                region.executionCount,
+                when (region.regionKind) {
+                    GAP -> FunctionRegionData.Region.Kind.Gap
+                    SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                    EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                    else -> FunctionRegionData.Region.Kind.Code
+                }
+            )
+        }
+
+        result + CoverageFunctionData(
+            regions.first().start.first,
+            regions.first().end.first,
+            demangledNames[function.name] ?: function.name,
+            FunctionRegionData(functionRegions),
+            if (CoverageGeneratorSettings.getInstance()
+                    .branchCoverageEnabled
+            )
+                if (function.branches == null) {
+                    val nonGaps = regions.filter {
+                        it.regionKind != GAP
+                    }
+                    findStatementsForBranches(
+                        regions.first().start, regions.last().end,
+                        nonGaps.toMutableList(),
+                        environment.toLocalPath(file.filename),
+                        project
+                    )
+                } else {
+                    function.branches.filter {
+                        function.filenames[it.fileId] == file.filename
+                    }.map {
+                        CoverageBranchData(
+                            it.start,
+                            it.executionCount.toInt(),
+                            it.falseExecutionCount.toInt()
+                        )
+                    }
+                }
+            else emptyList()
         )
     }
 
