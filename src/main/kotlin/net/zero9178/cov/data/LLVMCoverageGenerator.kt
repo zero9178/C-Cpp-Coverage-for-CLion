@@ -19,6 +19,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiRecursiveVisitor
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.util.io.delete
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
@@ -29,6 +30,7 @@ import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
+import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
@@ -307,41 +309,44 @@ class LLVMCoverageGenerator(
         return if (myDemangler != null) {
             val demangleStart = System.nanoTime()
             val isUndname = myDemangler.contains("undname")
-            val p = environment.hostMachine.createProcess(
-                GeneralCommandLine(listOf(myDemangler) + if (isUndname) listOf("--no-calling-convention") else emptyList()).withRedirectErrorStream(
-                    true
-                ),
-                false,
-                false
-            )
+            val tempFile = Files.createTempFile(environment.hostMachine.tempDirectory, null, null)
+            Files.write(tempFile, mangledNames.joinToString(" ") {
+                if (it.matches("^(_{1,3}Z|\\?).*".toRegex())) it else it.substringAfter(':')
+            }.toByteArray())
 
-            var isFirst = true
-            var result = listOf<String>()
-            p.process.outputStream.bufferedWriter().use { writer ->
-                p.process.inputStream.bufferedReader().use { reader ->
-                    result = mangledNames.map { mangled ->
-                        val input =
-                            if (mangled.matches("^(_{1,3}Z|\\?).*".toRegex())) mangled else mangled.substringAfter(':')
-                        writer.appendLine(input)
-                        writer.flush()
-                        if (isUndname) {
-                            if (!isFirst) {
-                                reader.readLine()
-                            } else {
-                                isFirst = false
-                            }
-                            val echo = reader.readLine()
-                            assert(echo == input)
+            val commandLine = listOf(myDemangler) + if (isUndname) {
+                listOf("--no-calling-convention", "@${tempFile.fileName}")
+            } else {
+                listOf("@${tempFile.fileName}")
+            }
+
+            val p = environment.hostMachine.runProcess(
+                GeneralCommandLine(
+                    commandLine
+                ).withRedirectErrorStream(
+                    true
+                ).withWorkDirectory(tempFile.parent.toString()),
+                null,
+                -1
+            )
+            var result = p.stdoutLines
+            tempFile.delete()
+            result = if (!isUndname) {
+                result
+            } else {
+                result.chunked(2).map { current ->
+                    if (current.size < 2) {
+                        current[0]
+                    } else {
+                        val (orig, demangled) = current
+                        if (demangled.contains("Invalid mangled name")) {
+                            orig
+                        } else {
+                            demangled
                         }
-                        val output: String? = reader.readLine()
-                        if (output == "error: Invalid mangled name") {
-                            return@map input
-                        }
-                        output ?: input
                     }
                 }
             }
-            p.destroyProcess()
             log.info("Demangling took ${System.nanoTime() - demangleStart}ns")
             mangledNames.zip(result).associate { it }
         } else {
