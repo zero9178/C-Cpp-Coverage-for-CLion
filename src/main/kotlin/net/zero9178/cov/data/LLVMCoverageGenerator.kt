@@ -1,6 +1,8 @@
 package net.zero9178.cov.data
 
-import com.beust.klaxon.*
+import com.beust.klaxon.JsonArray
+import com.beust.klaxon.JsonObject
+import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
@@ -66,15 +68,10 @@ class LLVMCoverageGenerator(
         )
     }
 
-    private data class Root(val data: List<Data>, val version: String, val type: String)
-
-    private data class Data(val files: List<File>, val functions: List<Function>)
-
-    private data class File(val filename: String)
+    private data class Data(val files: List<String>, val functions: List<Function>)
 
     private data class Function(
         val name: String,
-        val count: Long,
         val regions: List<Region>,
         val filenames: List<String>,
         val branches: List<Branch>? = null
@@ -101,65 +98,68 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         project: Project
     ): CoverageData {
-        val jsonStart = System.nanoTime()
-        val root = Klaxon().converter(object : Converter {
-            override fun canConvert(cls: Class<*>) = cls == Region::class.java
-
-            override fun fromJson(jv: JsonValue): Any? {
-                val array = jv.array ?: return null
-                return Region(
-                    (array[0] as Number).toInt() toCP
-                            (array[1] as Number).toInt(),
-                    (array[2] as Number).toInt() toCP
-                            (array[3] as Number).toInt(),
-                    (array[4] as Number).toLong(),
-                    (array[5] as Number).toInt(),
-                    (array[6] as Number).toInt(),
-                    (array[7] as Number).toInt()
-                )
+        val jsonParseStart = System.nanoTime()
+        val jsonObject = Parser.jackson().parse(StringReader(jsonContent)) as JsonObject
+        log.info("JSON parse took ${System.nanoTime() - jsonParseStart}ns")
+        val jsonProcessStart = System.nanoTime()
+        val data = jsonObject.array<JsonObject>("data")?.mapNotNull {
+            val files = it.array<JsonObject>("files")?.mapNotNull { file ->
+                file.string("filename")
             }
-
-            override fun toJson(value: Any): String {
-                val region = value as? Region ?: return ""
-                return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
-                        "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
+            val functions = it.array<JsonObject>("functions")?.mapNotNull { function ->
+                val name = function.string("name")
+                val regions = function.array<JsonArray<*>>("regions")?.map { array ->
+                    Region(
+                        (array[0] as Number).toInt() toCP
+                                (array[1] as Number).toInt(),
+                        (array[2] as Number).toInt() toCP
+                                (array[3] as Number).toInt(),
+                        (array[4] as Number).toLong(),
+                        (array[5] as Number).toInt(),
+                        (array[6] as Number).toInt(),
+                        (array[7] as Number).toInt()
+                    )
+                }
+                val filenames = function.array<String>("filenames")?.toList()
+                val branches = function.array<JsonArray<*>>("branches")?.map { array ->
+                    Branch(
+                        (array[0] as Number).toInt() toCP
+                                (array[1] as Number).toInt(),
+                        (array[2] as Number).toInt() toCP
+                                (array[3] as Number).toInt(),
+                        (array[4] as Number).toLong(),
+                        (array[5] as Number).toLong(),
+                        (array[6] as Number).toInt(),
+                        (array[7] as Number).toInt(),
+                        (array[8] as Number).toInt()
+                    )
+                }
+                if (name != null && regions != null && filenames != null) {
+                    Function(name, regions, filenames, branches)
+                } else {
+                    if (name != null) {
+                        log.warn("JSON fields of $name are malformed")
+                    }
+                    null
+                }
             }
-        }).converter(object : Converter {
-            override fun canConvert(cls: Class<*>) = cls == Branch::class.java
-
-            override fun fromJson(jv: JsonValue): Any? {
-                val array = jv.array ?: return null
-                return Branch(
-                    (array[0] as Number).toInt() toCP
-                            (array[1] as Number).toInt(),
-                    (array[2] as Number).toInt() toCP
-                            (array[3] as Number).toInt(),
-                    (array[4] as Number).toLong(),
-                    (array[5] as Number).toLong(),
-                    (array[6] as Number).toInt(),
-                    (array[7] as Number).toInt(),
-                    (array[8] as Number).toInt()
-                )
+            if (files != null && functions != null) {
+                Data(files, functions)
+            } else {
+                null
             }
+        } ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
 
-            override fun toJson(value: Any): String {
-                val region = value as? Branch ?: return ""
-                return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
-                        "${region.executionCount},${region.falseExecutionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
-            }
-        }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
-            ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
-        log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
-
-        return processRoot(root, environment, project)
+        log.info("JSON processing took ${System.nanoTime() - jsonProcessStart}ns")
+        return processRoot(data, environment, project)
     }
 
     private fun processRoot(
-        root: Root,
+        datas: List<Data>,
         environment: CPPEnvironment,
         project: Project
     ): CoverageData {
-        val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
+        val mangledNames = datas.flatMap { data -> data.functions.map { it.name } }
         val demangledNames = demangle(environment, mangledNames)
 
         val processDataStart = System.nanoTime()
@@ -171,7 +171,7 @@ class LLVMCoverageGenerator(
             }.toHashSet()
         } ?: emptySet()
 
-        val filesMap = root.data.flatMap { data ->
+        val filesMap = datas.flatMap { data ->
             //Associates the filename with a list of all functions in that file
             val funcMap =
                 data.functions.flatMap { func ->
@@ -182,7 +182,7 @@ class LLVMCoverageGenerator(
 
             data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
 
-                val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
+                val filePath = environment.toLocalPath(file).replace('\\', '/')
                 if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && !sources.any {
                         it == filePath
                     }) {
@@ -190,7 +190,7 @@ class LLVMCoverageGenerator(
                 }
 
                 val llvmFunctions = funcMap.getOrDefault(
-                    file.filename,
+                    file,
                     emptyList()
                 )
 
@@ -228,24 +228,12 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         project: Project,
         demangledNames: Map<String, String>,
-        file: File,
+        file: String,
         functions: List<Function>
     ): List<CoverageFunctionData> = functions.fold(emptyList()) { result, function ->
 
-        val regions = function.regions.filter {
-            function.filenames[it.fileId] == file.filename
-        }.sortedWith { lhs, rhs ->
-            when {
-                lhs.start != rhs.start -> {
-                    lhs.start.compareTo(rhs.start)
-                }
-                lhs.end != rhs.end -> {
-                    lhs.end.compareTo(rhs.end)
-                }
-                else -> {
-                    lhs.regionKind.compareTo(rhs.regionKind)
-                }
-            }
+        var regions = function.regions.filter {
+            function.filenames[it.fileId] == file
         }
 
         if (regions.isEmpty()) {
@@ -275,18 +263,31 @@ class LLVMCoverageGenerator(
                     .branchCoverageEnabled
             )
                 if (function.branches == null) {
+                    regions = regions.sortedWith { lhs, rhs ->
+                        when {
+                            lhs.start != rhs.start -> {
+                                lhs.start.compareTo(rhs.start)
+                            }
+                            lhs.end != rhs.end -> {
+                                lhs.end.compareTo(rhs.end)
+                            }
+                            else -> {
+                                lhs.regionKind.compareTo(rhs.regionKind)
+                            }
+                        }
+                    }
                     val nonGaps = regions.filter {
                         it.regionKind != GAP
                     }
                     findStatementsForBranches(
                         regions.first().start, regions.last().end,
                         nonGaps.toMutableList(),
-                        environment.toLocalPath(file.filename),
+                        environment.toLocalPath(file),
                         project
                     )
                 } else {
                     function.branches.filter {
-                        function.filenames[it.fileId] == file.filename
+                        function.filenames[it.fileId] == file
                     }.map {
                         CoverageBranchData(
                             it.start,
