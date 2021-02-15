@@ -4,15 +4,15 @@ import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
-import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.Key
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 
 val STARTED_BY_COVERAGE_BUTTON = Key<Boolean>("STARTED_BY_COVERAGE_BUTTON")
 
-class CoverageButton : AnAction() {
+class CoverageButton : DumbAwareAction() {
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabledAndVisible = CoverageGeneratorSettings.getInstance().useCoverageAction

@@ -6,13 +6,12 @@ import com.github.h0tk3y.betterParse.grammar.parseToEnd
 import com.github.h0tk3y.betterParse.parser.ParseException
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
 import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
-import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -136,14 +135,14 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                         }
                         ast.filter { it !is Item.Branch }
                     } catch (e: ParseException) {
-                        val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                            "Error parsing gcov generated files",
-                            "This is either due to a bug in the plugin or gcov",
-                            "Parser output:${e.errorResult}",
-                            NotificationType.ERROR
-                        )
-                        Notifications.Bus.notify(notification, project)
-                        emptyList<Item>()
+                        NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                            .createNotification(
+                                "Error parsing gcov generated files",
+                                "This is either due to a bug in the plugin or gcov",
+                                "Parser output:${e.errorResult}",
+                                NotificationType.ERROR
+                            ).notify(project)
+                        emptyList()
                     }
                 }
             }
@@ -219,17 +218,19 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         val lines = p.stdout
         val retCode = p.exitCode
         if (retCode != 0) {
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "gcov returned error code $retCode",
-                "Invocation and error output:",
-                "Invocation: ${(listOf(
-                    myGcov,
-                    "-i",
-                    "-m"
-                ) + files).joinToString(" ")}\n Stderr: ${lines}",
-                NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
+                    "gcov returned error code $retCode",
+                    "Invocation and error output:",
+                    "Invocation: ${
+                        (listOf(
+                            myGcov,
+                            "-i",
+                            "-m"
+                        ) + files).joinToString(" ")
+                    }\n Stderr: $lines",
+                    NotificationType.ERROR
+                ).notify(configuration.project)
             return null
         }
 

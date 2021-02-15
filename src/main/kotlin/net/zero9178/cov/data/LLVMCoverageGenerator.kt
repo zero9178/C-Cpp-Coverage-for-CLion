@@ -1,12 +1,14 @@
 package net.zero9178.cov.data
 
-import com.beust.klaxon.*
+import com.beust.klaxon.JsonArray
+import com.beust.klaxon.JsonObject
+import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.DumbService
@@ -19,21 +21,23 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiRecursiveVisitor
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.util.io.delete
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
-import net.zero9178.cov.notification.CoverageNotification
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
+import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
+    private val myMajorVersion: Int,
     private val myLLVMCov: String,
     private val myLLVMProf: String,
     private val myDemangler: String?
@@ -41,6 +45,10 @@ class LLVMCoverageGenerator(
 
     companion object {
         val log = Logger.getInstance(LLVMCoverageGenerator::class.java)
+        const val CODE = 0
+        const val EXPANSION = 1
+        const val SKIPPED = 2
+        const val GAP = 3
     }
 
     override fun patchEnvironment(
@@ -60,84 +68,110 @@ class LLVMCoverageGenerator(
         )
     }
 
-    private data class Root(val data: List<Data>, val version: String, val type: String)
-
-    private data class Data(val files: List<File>, val functions: List<Function>)
-
-    private data class File(val filename: String)
+    private data class Data(val files: List<String>, val functions: List<Function>)
 
     private data class Function(
         val name: String,
-        val count: Long,
         val regions: List<Region>,
-        val filenames: List<String>
+        val filenames: List<String>,
+        val branches: List<Branch>? = null
     )
 
     private data class Region(
         val start: ComparablePair<Int, Int>,
         val end: ComparablePair<Int, Int>,
         val executionCount: Long, val fileId: Int, val expandedFileId: Int, val regionKind: Int
-    ) {
-        companion object {
-            const val CODE = 0
-            const val EXPANSION = 1
-            const val SKIPPED = 2
-            const val GAP = 3
-        }
-    }
+    )
+
+    private data class Branch(
+        val start: ComparablePair<Int, Int>,
+        val end: ComparablePair<Int, Int>,
+        val executionCount: Long,
+        val falseExecutionCount: Long,
+        val fileId: Int,
+        val expandedFileId: Int,
+        val regionKind: Int
+    )
 
     private fun processJson(
         jsonContent: String,
         environment: CPPEnvironment,
         project: Project
     ): CoverageData {
-        val jsonStart = System.nanoTime()
-        val root = Klaxon().converter(object : Converter {
-            override fun canConvert(cls: Class<*>) = cls == Region::class.java
-
-            override fun fromJson(jv: JsonValue): Any? {
-                val array = jv.array ?: return null
-                return Region(
-                    (array[0] as Number).toInt() toCP
-                            (array[1] as Number).toInt(),
-                    (array[2] as Number).toInt() toCP
-                            (array[3] as Number).toInt(),
-                    (array[4] as Number).toLong(),
-                    (array[5] as Number).toInt(),
-                    (array[6] as Number).toInt(),
-                    (array[7] as Number).toInt()
-                )
+        val jsonParseStart = System.nanoTime()
+        val jsonObject = Parser.jackson().parse(StringReader(jsonContent)) as JsonObject
+        log.info("JSON parse took ${System.nanoTime() - jsonParseStart}ns")
+        val jsonProcessStart = System.nanoTime()
+        val data = jsonObject.array<JsonObject>("data")?.mapNotNull {
+            val files = it.array<JsonObject>("files")?.mapNotNull { file ->
+                file.string("filename")
             }
-
-            override fun toJson(value: Any): String {
-                val region = value as? Region ?: return ""
-                return "[${region.start.first},${region.start.second},${region.start.first},${region.start.second}," +
-                        "${region.executionCount},${region.fileId},${region.expandedFileId},${region.regionKind}]"
+            val functions = it.array<JsonObject>("functions")?.mapNotNull { function ->
+                val name = function.string("name")
+                val regions = function.array<JsonArray<*>>("regions")?.map { array ->
+                    Region(
+                        (array[0] as Number).toInt() toCP
+                                (array[1] as Number).toInt(),
+                        (array[2] as Number).toInt() toCP
+                                (array[3] as Number).toInt(),
+                        (array[4] as Number).toLong(),
+                        (array[5] as Number).toInt(),
+                        (array[6] as Number).toInt(),
+                        (array[7] as Number).toInt()
+                    )
+                }
+                val filenames = function.array<String>("filenames")?.toList()
+                val branches = function.array<JsonArray<*>>("branches")?.map { array ->
+                    Branch(
+                        (array[0] as Number).toInt() toCP
+                                (array[1] as Number).toInt(),
+                        (array[2] as Number).toInt() toCP
+                                (array[3] as Number).toInt(),
+                        (array[4] as Number).toLong(),
+                        (array[5] as Number).toLong(),
+                        (array[6] as Number).toInt(),
+                        (array[7] as Number).toInt(),
+                        (array[8] as Number).toInt()
+                    )
+                }
+                if (name != null && regions != null && filenames != null) {
+                    Function(name, regions, filenames, branches)
+                } else {
+                    if (name != null) {
+                        log.warn("JSON fields of $name are malformed")
+                    }
+                    null
+                }
             }
-        }).maybeParse<Root>(Parser.jackson().parse(StringReader(jsonContent)) as JsonObject)
-            ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
-        log.info("JSON parse took ${System.nanoTime() - jsonStart}ns")
+            if (files != null && functions != null) {
+                Data(files, functions)
+            } else {
+                null
+            }
+        } ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
 
-        return processRoot(root, environment, project)
+        log.info("JSON processing took ${System.nanoTime() - jsonProcessStart}ns")
+        return processRoot(data, environment, project)
     }
 
     private fun processRoot(
-        root: Root,
+        datas: List<Data>,
         environment: CPPEnvironment,
         project: Project
     ): CoverageData {
-        val mangledNames = root.data.flatMap { data -> data.functions.map { it.name } }
+        val mangledNames = datas.flatMap { data -> data.functions.map { it.name } }
         val demangledNames = demangle(environment, mangledNames)
 
+        val processDataStart = System.nanoTime()
         val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
             ModuleRootManager.getInstance(module).contentEntries.flatMap {
                 it.sourceFolderFiles.toList()
             }.map {
                 it.path
             }.toHashSet()
-        } ?: emptySet<String>()
+        } ?: emptySet()
 
-        val filesMap = root.data.flatMap { data ->
+        val filesMap = datas.flatMap { data ->
             //Associates the filename with a list of all functions in that file
             val funcMap =
                 data.functions.flatMap { func ->
@@ -148,77 +182,32 @@ class LLVMCoverageGenerator(
 
             data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
 
-                val filePath = environment.toLocalPath(file.filename).replace('\\', '/')
+                val filePath = environment.toLocalPath(file).replace('\\', '/')
                 if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && !sources.any {
                         it == filePath
                     }) {
                     return@fileFold result
                 }
 
-                val activeCount = Thread.activeCount()
-                val functionsMap = funcMap.getOrDefault(
-                    file.filename,
+                val llvmFunctions = funcMap.getOrDefault(
+                    file,
                     emptyList()
-                ).chunked(ceil(data.files.size / activeCount.toDouble()).toInt()).map { functions ->
-                    CompletableFuture.supplyAsync<List<CoverageFunctionData>> {
-                        functions.fold(emptyList()) { result, function ->
+                )
 
-                            val regions = function.regions.filter {
-                                function.filenames[it.fileId] == file.filename
-                            }.sortedWith(Comparator { lhs, rhs ->
-                                when {
-                                    lhs.start != rhs.start -> {
-                                        lhs.start.compareTo(rhs.start)
-                                    }
-                                    lhs.end != rhs.end -> {
-                                        lhs.end.compareTo(rhs.end)
-                                    }
-                                    else -> {
-                                        lhs.regionKind.compareTo(rhs.regionKind)
-                                    }
-                                }
-                            })
-
-                            val nonGaps = regions.filter {
-                                it.regionKind != Region.GAP
-                            }
-
-                            if (regions.isEmpty()) {
-                                return@fold result
-                            }
-
-                            val functionRegions = regions.map { region ->
-                                FunctionRegionData.Region(
-                                    region.start,
-                                    region.end,
-                                    region.executionCount,
-                                    when (region.regionKind) {
-                                        Region.GAP -> FunctionRegionData.Region.Kind.Gap
-                                        Region.SKIPPED -> FunctionRegionData.Region.Kind.Skipped
-                                        Region.EXPANSION -> FunctionRegionData.Region.Kind.Expanded
-                                        else -> FunctionRegionData.Region.Kind.Code
-                                    }
-                                )
-                            }
-
-                            result + CoverageFunctionData(
-                                regions.first().start.first,
-                                regions.first().end.first,
-                                demangledNames[function.name] ?: function.name,
-                                FunctionRegionData(functionRegions),
-                                if (CoverageGeneratorSettings.getInstance()
-                                        .branchCoverageEnabled
-                                )
-                                    findStatementsForBranches(
-                                        regions.first().start, regions.last().end,
-                                        nonGaps.toMutableList(),
-                                        environment.toLocalPath(file.filename),
-                                        project
-                                    ) else emptyList()
-                            )
+                val functionsMap = if (myMajorVersion >= 12) {
+                    processFunctions(environment, project, demangledNames, file, llvmFunctions)
+                } else {
+                    llvmFunctions.chunked(
+                        ceil(
+                            data.files.size / Thread.activeCount()
+                                .toDouble()
+                        ).toInt()
+                    ).map { functions ->
+                        CompletableFuture.supplyAsync {
+                            processFunctions(environment, project, demangledNames, file, functions)
                         }
-                    }
-                }.flatMap { it.get() }.associateBy { it.functionName }
+                    }.flatMap { it.get() }
+                }.associateBy { it.functionName }
 
                 result + CoverageFileData(
                     filePath,
@@ -227,10 +216,87 @@ class LLVMCoverageGenerator(
 
             }
         }.associateBy { it.filePath }
+        log.info("Processing coverage data took ${System.nanoTime() - processDataStart}ns")
         return CoverageData(
             filesMap,
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
             CoverageGeneratorSettings.getInstance().calculateExternalSources
+        )
+    }
+
+    private fun processFunctions(
+        environment: CPPEnvironment,
+        project: Project,
+        demangledNames: Map<String, String>,
+        file: String,
+        functions: List<Function>
+    ): List<CoverageFunctionData> = functions.fold(emptyList()) { result, function ->
+
+        var regions = function.regions.filter {
+            function.filenames[it.fileId] == file
+        }
+
+        if (regions.isEmpty()) {
+            return@fold result
+        }
+
+        val functionRegions = regions.map { region ->
+            FunctionRegionData.Region(
+                region.start,
+                region.end,
+                region.executionCount,
+                when (region.regionKind) {
+                    GAP -> FunctionRegionData.Region.Kind.Gap
+                    SKIPPED -> FunctionRegionData.Region.Kind.Skipped
+                    EXPANSION -> FunctionRegionData.Region.Kind.Expanded
+                    else -> FunctionRegionData.Region.Kind.Code
+                }
+            )
+        }
+
+        result + CoverageFunctionData(
+            regions.first().start.first,
+            regions.first().end.first,
+            demangledNames[function.name] ?: function.name,
+            FunctionRegionData(functionRegions),
+            if (CoverageGeneratorSettings.getInstance()
+                    .branchCoverageEnabled
+            )
+                if (function.branches == null) {
+                    regions = regions.sortedWith { lhs, rhs ->
+                        when {
+                            lhs.start != rhs.start -> {
+                                lhs.start.compareTo(rhs.start)
+                            }
+                            lhs.end != rhs.end -> {
+                                lhs.end.compareTo(rhs.end)
+                            }
+                            else -> {
+                                lhs.regionKind.compareTo(rhs.regionKind)
+                            }
+                        }
+                    }
+                    val nonGaps = regions.filter {
+                        it.regionKind != GAP
+                    }
+                    findStatementsForBranches(
+                        regions.first().start, regions.last().end,
+                        nonGaps.toMutableList(),
+                        environment.toLocalPath(file),
+                        project
+                    )
+                } else {
+                    function.branches.filter {
+                        function.filenames[it.fileId] == file
+                    }.map {
+                        CoverageBranchData(
+                            it.start,
+                            it.executionCount.toInt(),
+                            it.falseExecutionCount.toInt()
+                        )
+                    }
+                }
+            else emptyList()
         )
     }
 
@@ -242,42 +308,47 @@ class LLVMCoverageGenerator(
             return emptyMap()
         }
         return if (myDemangler != null) {
+            val demangleStart = System.nanoTime()
             val isUndname = myDemangler.contains("undname")
-            val p = environment.hostMachine.createProcess(
-                GeneralCommandLine(listOf(myDemangler) + if (isUndname) listOf("--no-calling-convention") else emptyList()).withRedirectErrorStream(
-                    true
-                ),
-                false,
-                false
-            )
+            val tempFile = Files.createTempFile(environment.hostMachine.tempDirectory, null, null)
+            Files.write(tempFile, mangledNames.joinToString(" ") {
+                if (it.matches("^(_{1,3}Z|\\?).*".toRegex())) it else it.substringAfter(':')
+            }.toByteArray())
 
-            var isFirst = true
-            var result = listOf<String>()
-            p.process.outputStream.bufferedWriter().use { writer ->
-                p.process.inputStream.bufferedReader().use { reader ->
-                    result = mangledNames.map { mangled ->
-                        val input =
-                            if (mangled.matches("^(_{1,3}Z|\\?).*".toRegex())) mangled else mangled.substringAfter(':')
-                        writer.appendLine(input)
-                        writer.flush()
-                        if (isUndname) {
-                            if (!isFirst) {
-                                reader.readLine()
-                            } else {
-                                isFirst = false
-                            }
-                            val echo = reader.readLine()
-                            assert(echo == input)
+            val commandLine = listOf(myDemangler) + if (isUndname) {
+                listOf("--no-calling-convention", "@${tempFile.fileName}")
+            } else {
+                listOf("@${tempFile.fileName}")
+            }
+
+            val p = environment.hostMachine.runProcess(
+                GeneralCommandLine(
+                    commandLine
+                ).withRedirectErrorStream(
+                    true
+                ).withWorkDirectory(tempFile.parent.toString()),
+                null,
+                -1
+            )
+            var result = p.stdoutLines
+            tempFile.delete()
+            result = if (!isUndname) {
+                result
+            } else {
+                result.chunked(2).map { current ->
+                    if (current.size < 2) {
+                        current[0]
+                    } else {
+                        val (orig, demangled) = current
+                        if (demangled.contains("Invalid mangled name")) {
+                            orig
+                        } else {
+                            demangled
                         }
-                        val output: String? = reader.readLine()
-                        if (output == "error: Invalid mangled name") {
-                            return@map input
-                        }
-                        output ?: input
                     }
                 }
             }
-            p.destroyProcess()
+            log.info("Demangling took ${System.nanoTime() - demangleStart}ns")
             mangledNames.zip(result).associate { it }
         } else {
             mangledNames.associateBy { it }
@@ -358,7 +429,7 @@ class LLVMCoverageGenerator(
                     val neg = expression.negativeExpression ?: return super.visitConditionalExpression(expression)
                     val quest = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
                         ?: return super.visitConditionalExpression(expression)
-                    matchThenElse(quest.textOffset, pos, neg, false)
+                    matchThenElse(quest.textOffset, pos, neg)
                     super.visitConditionalExpression(expression)
                 }
 
@@ -429,11 +500,10 @@ class LLVMCoverageGenerator(
                 private fun matchThenElse(
                     offset: Int,
                     thenBranch: OCElement,
-                    elseBranch: OCElement,
-                    removeRegions: Boolean = true
+                    elseBranch: OCElement
                 ) {
-                    val thenRegion = find(thenBranch, removeRegions) ?: return
-                    val elseRegion = find(elseBranch, removeRegions) ?: return
+                    val thenRegion = find(thenBranch, false) ?: return
+                    val elseRegion = find(elseBranch, false) ?: return
 
                     val lineNumber = document.getLineNumber(offset)
                     branches += CoverageBranchData(
@@ -459,6 +529,7 @@ class LLVMCoverageGenerator(
         val files = config.configurationGenerationDir.listFiles()
             ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
 
+        val profdataStart = System.nanoTime()
         val p = environment.hostMachine.createProcess(
             GeneralCommandLine(listOf(
                 myLLVMProf,
@@ -472,17 +543,22 @@ class LLVMCoverageGenerator(
         var retCode = p.process.waitFor()
         var lines = p.process.errorStream.bufferedReader().readLines()
         if (retCode != 0) {
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-profdata returned error code $retCode with error output:\n${lines.joinToString(
-                    "\n"
-                )}", NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
+                    "llvm-profdata returned error code $retCode with error output:\n${
+                        lines.joinToString(
+                            "\n"
+                        )
+                    }",
+                    NotificationType.ERROR
+                ).notify(configuration.project)
             return null
         }
+        log.info("LLVM profdata took ${System.nanoTime() - profdataStart}ns")
 
         files.forEach { it.delete() }
 
+        val covStart = System.nanoTime()
         val input = listOf(
             myLLVMCov,
             "export",
@@ -503,15 +579,16 @@ class LLVMCoverageGenerator(
         retCode = llvmCov.exitCode
         if (retCode != 0) {
             val errorOutput = llvmCov.stderrLines
-            val notification = CoverageNotification.GROUP_DISPLAY_ID_INFO.createNotification(
-                "llvm-cov returned error code $retCode",
-                "Invocation and error output:",
-                "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
-                NotificationType.ERROR
-            )
-            Notifications.Bus.notify(notification, configuration.project)
+            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                .createNotification(
+                    "llvm-cov returned error code $retCode",
+                    "Invocation and error output:",
+                    "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
+                    NotificationType.ERROR
+                ).notify(configuration.project)
             return null
         }
+        log.info("LLVM cov took ${System.nanoTime() - covStart}ns")
 
         return processJson(lines.joinToString(), environment, configuration.project)
     }
