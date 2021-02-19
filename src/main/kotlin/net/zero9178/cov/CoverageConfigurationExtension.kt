@@ -235,9 +235,9 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                     "-fprofile-arcs",
                     "-ftest-coverage"
                 )
-            ) || list.containsAll(
-                listOf("-fprofile-instr-generate", "-fcoverage-mapping")
-            )
+            ) || (list.contains("-fcoverage-mapping") && list.any {
+                it.matches("-fprofile-instr-generate(=.*)?".toRegex())
+            })
         }
     }
 
