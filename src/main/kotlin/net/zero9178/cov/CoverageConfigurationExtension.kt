@@ -14,9 +14,12 @@ import com.intellij.openapi.progress.PerformInBackgroundOption
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.execution.coverage.CMakeCoverageBuildOptionsInstallerFactory
+import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.execution.CidrBuildTarget
 import com.jetbrains.cidr.execution.CidrRunConfiguration
@@ -24,7 +27,6 @@ import com.jetbrains.cidr.execution.CidrRunConfigurationExtensionBase
 import com.jetbrains.cidr.execution.ConfigurationExtensionContext
 import com.jetbrains.cidr.execution.coverage.CidrCoverageProgramRunner
 import com.jetbrains.cidr.lang.CLanguageKind
-import com.jetbrains.cidr.lang.toolchains.CidrCompilerSwitches
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
 import net.zero9178.cov.actions.STARTED_BY_COVERAGE_BUTTON
 import net.zero9178.cov.data.CoverageFileData
@@ -40,9 +42,6 @@ import javax.swing.tree.DefaultMutableTreeNode
 class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
     override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>): Boolean {
-        if (configuration !is CMakeAppRunConfiguration) {
-            return false
-        }
         return if (CoverageGeneratorSettings.getInstance().useCoverageAction) {
             val startedByCoverageButton: Boolean? = configuration.getUserData(STARTED_BY_COVERAGE_BUTTON)
             !(startedByCoverageButton == null || startedByCoverageButton == false)
@@ -56,14 +55,16 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         environment: CidrToolEnvironment,
         runnerSettings: RunnerSettings?
     ): Boolean {
-        if (environment !is CPPEnvironment || applicableConfiguration !is CMakeAppRunConfiguration) {
+        if (environment !is CPPEnvironment) {
             return false
         }
         // Don't check for flags if the user explicitly requested it
         if (explicitlyRequested(applicableConfiguration)) {
             return true
         }
-        return hasCompilerFlags(applicableConfiguration)
+        return (applicableConfiguration as? CMakeAppRunConfiguration)?.let {
+            hasCompilerFlags(it)
+        } ?: false
     }
 
     override fun patchCommandLine(
@@ -80,7 +81,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         ) {
             return
         }
-        getCoverageGenerator(environment, configuration)?.patchEnvironment(configuration, environment, cmdLine)
+        getCoverageGenerator(environment, configuration.project)?.patchEnvironment(configuration, environment, cmdLine)
     }
 
     override fun attachToProcess(
@@ -137,7 +138,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                             override fun run(indicator: ProgressIndicator) {
                                 indicator.isIndeterminate = true
                                 val data =
-                                    getCoverageGenerator(environment, configuration)?.generateCoverage(
+                                    getCoverageGenerator(environment, configuration.project)?.generateCoverage(
                                         configuration,
                                         environment,
                                         executionTarget
@@ -193,7 +194,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
     private fun getCoverageGenerator(
         environment: CPPEnvironment,
-        configuration: CMakeAppRunConfiguration
+        project: Project
     ): CoverageGenerator? {
         val generator = CoverageGeneratorSettings.getInstance().getGeneratorFor(environment.toolchain.name)
         if (generator == null) {
@@ -201,7 +202,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                 .createNotification(
                     "Neither gcov nor llvm-cov specified for ${environment.toolchain.name}",
                     NotificationType.ERROR
-                ).notify(configuration.project)
+                ).notify(project)
             return null
         }
         val coverageGenerator = generator.first
@@ -211,7 +212,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                     .createNotification(
                         "Coverage could not be generated due to following error: ${generator.second}",
                         NotificationType.ERROR
-                    ).notify(configuration.project)
+                    ).notify(project)
             }
             return null
         }
@@ -220,10 +221,15 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
     private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration): Boolean {
         val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
-        val resolver = configuration.getResolveConfiguration(executionTarget) ?: return false
-        return CLanguageKind.values().any {
-            val switches = resolver.getCompilerSettings(it).compilerSwitches ?: return@any false
-            val list = switches.getList(CidrCompilerSwitches.Format.RAW)
+        // I am in a bit of dilemma here. The problem is that I don't want the plugin to depend on CTest
+        // just to check whether the runConfiguration is a CTest run. Those have no runConfiguration and therefore
+        // there's no way for me to check whether it has compiler flags or not because CLion seems to pick
+        // whatever random target (that mustn't even be a library or executable CMake target) as target
+        // when running all CTests
+        val runConfiguration = configuration.getBuildAndRunConfigurations(executionTarget)?.runConfiguration
+            ?: return configuration is CMakeTestRunConfiguration
+        return CLanguageKind.values().any { kind ->
+            val list = runConfiguration.getCombinedCompilerFlags(kind, null)
             list.contains("--coverage") || list.containsAll(
                 listOf(
                     "-fprofile-arcs",
@@ -235,7 +241,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         }
     }
 
-    private fun explicitlyRequested(configuration: CMakeAppRunConfiguration): Boolean {
+    private fun explicitlyRequested(configuration: UserDataHolder): Boolean {
         return CoverageGeneratorSettings.getInstance().useCoverageAction && configuration.getUserData(
             STARTED_BY_COVERAGE_BUTTON
         ) == true

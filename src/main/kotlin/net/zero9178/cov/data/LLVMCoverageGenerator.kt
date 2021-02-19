@@ -63,7 +63,7 @@ class LLVMCoverageGenerator(
         cmdLine.withEnvironment(
             "LLVM_PROFILE_FILE",
             environment.toEnvPath(
-                config.configurationGenerationDir.resolve("${config.target.name}-%p.profraw").absolutePath
+                config.configurationGenerationDir.resolve("%4m.profraw").absolutePath
             )
         )
     }
@@ -522,26 +522,28 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         executionTarget: ExecutionTarget
     ): CoverageData? {
-        val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
+        val config = configuration.getBuildAndRunConfigurations(executionTarget)?.runConfiguration
+        val configurationGenerationDir = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
-        ) ?: return null
+        )?.configurationGenerationDir ?: return null
 
-        val files = config.configurationGenerationDir.listFiles()
-            ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
+        val files = configurationGenerationDir.listFiles()
+            ?.filter { it.name.endsWith("profraw") } ?: emptyList()
 
+        val tempFile = Files.createTempFile(configurationGenerationDir.toPath(), null, ".profdata")
         val profdataStart = System.nanoTime()
         val p = environment.hostMachine.createProcess(
             GeneralCommandLine(listOf(
                 myLLVMProf,
                 "merge",
-                "-output=${config.target.name}.profdata"
+                "-output=${tempFile}"
             ) + files.map { environment.toEnvPath(it.absolutePath) })
-                .withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
+                .withWorkDirectory(environment.toEnvPath(configurationGenerationDir.absolutePath)),
             false,
             false
         )
         var retCode = p.process.waitFor()
-        var lines = p.process.errorStream.bufferedReader().readLines()
+        val lines = p.process.errorStream.bufferedReader().readLines()
         if (retCode != 0) {
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
@@ -558,24 +560,42 @@ class LLVMCoverageGenerator(
 
         files.forEach { it.delete() }
 
+        val executable = if (config != null) {
+            listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
+        } else {
+            // Just put em all in for now
+            CMakeWorkspace.getInstance(configuration.project).modelTargets.filter {
+                it.isExecutable
+            }.mapNotNull { executable ->
+                executable.buildConfigurations.find { it.configurationGenerationDir == configurationGenerationDir }?.productFile?.toString()
+            }
+        }
+
+        if (executable.isEmpty()) {
+            return null
+        }
+
         val covStart = System.nanoTime()
         val input = listOf(
             myLLVMCov,
             "export",
             "-instr-profile",
-            "${config.target.name}.profdata",
-            environment.toEnvPath(config.productFile?.absolutePath ?: "")
-        )
+            "$tempFile",
+            executable.first()
+        ) + executable.flatMap {
+            listOf("-object", it)
+        }
         val llvmCov = environment.hostMachine.runProcess(
             GeneralCommandLine(input).withWorkDirectory(
                 environment.toEnvPath(
-                    config.configurationGenerationDir.absolutePath
+                    configurationGenerationDir.absolutePath
                 )
             ),
             null,
             -1
         )
-        lines = llvmCov.stdoutLines
+        tempFile.delete()
+        val result = llvmCov.stdout
         retCode = llvmCov.exitCode
         if (retCode != 0) {
             val errorOutput = llvmCov.stderrLines
@@ -590,6 +610,6 @@ class LLVMCoverageGenerator(
         }
         log.info("LLVM cov took ${System.nanoTime() - covStart}ns")
 
-        return processJson(lines.joinToString(), environment, configuration.project)
+        return processJson(result, environment, configuration.project)
     }
 }
