@@ -30,8 +30,7 @@ class CoverageButton : DumbAwareAction() {
             e.presentation.isEnabled = false
             return
         }
-        e.presentation.isEnabled = settings.type.id.startsWith("CMake")
-
+        e.presentation.isEnabled = CMakeAppRunConfiguration.getSelectedRunConfiguration(e.project) != null
         e.presentation.text = "Run '${settings.name}' with C/C++ Coverage Plugin"
     }
 
