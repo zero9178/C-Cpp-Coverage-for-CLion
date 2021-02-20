@@ -27,7 +27,7 @@ dependencies {
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
     version '2020.3.1'
-    plugins = ['com.intellij.clion','com.intellij.cidr.base']
+    plugins = ['com.intellij.clion','com.intellij.cidr.base','com.intellij.cidr.lang']
     type 'CL'
 }
 runIde {
