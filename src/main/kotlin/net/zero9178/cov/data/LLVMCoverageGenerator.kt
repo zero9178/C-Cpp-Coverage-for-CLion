@@ -11,6 +11,8 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -34,6 +36,7 @@ import net.zero9178.cov.util.toCP
 import java.io.StringReader
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
@@ -96,7 +99,8 @@ class LLVMCoverageGenerator(
     private fun processJson(
         jsonContent: String,
         environment: CPPEnvironment,
-        project: Project
+        project: Project,
+        indicator: ProgressIndicator
     ): CoverageData {
         val jsonParseStart = System.nanoTime()
         val jsonObject = Parser.jackson().parse(StringReader(jsonContent)) as JsonObject
@@ -151,16 +155,17 @@ class LLVMCoverageGenerator(
         } ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
 
         log.info("JSON processing took ${System.nanoTime() - jsonProcessStart}ns")
-        return processRoot(data, environment, project)
+        return processRoot(data, environment, project, indicator)
     }
 
     private fun processRoot(
         datas: List<Data>,
         environment: CPPEnvironment,
-        project: Project
+        project: Project,
+        indicator: ProgressIndicator
     ): CoverageData {
         val mangledNames = datas.flatMap { data -> data.functions.map { it.name } }
-        val demangledNames = demangle(environment, mangledNames)
+        val demangledNames = demangle(environment, mangledNames, indicator)
 
         val processDataStart = System.nanoTime()
         val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
@@ -194,20 +199,33 @@ class LLVMCoverageGenerator(
                     emptyList()
                 )
 
-                val functionsMap = if (myMajorVersion >= 12) {
+                val functionsMap = if (myMajorVersion >= 12 || !CoverageGeneratorSettings.getInstance()
+                        .branchCoverageEnabled
+                ) {
                     processFunctions(environment, project, demangledNames, file, llvmFunctions)
                 } else {
-                    llvmFunctions.chunked(
-                        ceil(
-                            data.files.size / Thread.activeCount()
-                                .toDouble()
-                        ).toInt()
-                    ).map { functions ->
-                        CompletableFuture.supplyAsync {
-                            processFunctions(environment, project, demangledNames, file, functions)
+                    try {
+                        llvmFunctions.chunked(
+                            ceil(
+                                data.files.size / Thread.activeCount()
+                                    .toDouble()
+                            ).toInt()
+                        ).map { functions ->
+                            CompletableFuture.supplyAsync {
+                                processFunctions(environment, project, demangledNames, file, functions)
+                            }
+                        }.flatMap { it.join() }
+                    } catch (e: CompletionException) {
+                        val cause = e.cause
+                        if (cause != null) {
+                            throw cause
+                        } else {
+                            throw e
                         }
-                    }.flatMap { it.get() }
+                    }
                 }.associateBy { it.functionName }
+
+                ProgressManager.checkCanceled()
 
                 result + CoverageFileData(
                     filePath,
@@ -279,6 +297,7 @@ class LLVMCoverageGenerator(
                     val nonGaps = regions.filter {
                         it.regionKind != GAP
                     }
+                    ProgressManager.checkCanceled()
                     findStatementsForBranches(
                         regions.first().start, regions.last().end,
                         nonGaps.toMutableList(),
@@ -286,6 +305,7 @@ class LLVMCoverageGenerator(
                         project
                     )
                 } else {
+                    ProgressManager.checkCanceled()
                     function.branches.filter {
                         function.filenames[it.fileId] == file
                     }.map {
@@ -302,7 +322,8 @@ class LLVMCoverageGenerator(
 
     private fun demangle(
         environment: CPPEnvironment,
-        mangledNames: List<String>
+        mangledNames: List<String>,
+        indicator: ProgressIndicator
     ): Map<String, String> {
         if (mangledNames.isEmpty()) {
             return emptyMap()
@@ -327,9 +348,10 @@ class LLVMCoverageGenerator(
                 ).withRedirectErrorStream(
                     true
                 ).withWorkDirectory(tempFile.parent.toString()),
-                null,
+                indicator,
                 -1
             )
+            indicator.checkCanceled()
             var result = p.stdoutLines
             tempFile.delete()
             result = if (!isUndname) {
@@ -388,6 +410,7 @@ class LLVMCoverageGenerator(
 
             object : OCVisitor(), PsiRecursiveVisitor {
                 override fun visitElement(element: PsiElement) {
+                    ProgressManager.checkCanceled()
                     super.visitElement(element)
 
                     var curr: PsiElement? = element.firstChild
@@ -520,7 +543,8 @@ class LLVMCoverageGenerator(
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
+        executionTarget: ExecutionTarget,
+        indicator: ProgressIndicator
     ): CoverageData? {
         val config = configuration.getBuildAndRunConfigurations(executionTarget)?.runConfiguration
         val configurationGenerationDir = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
@@ -532,25 +556,22 @@ class LLVMCoverageGenerator(
 
         val tempFile = Files.createTempFile(configurationGenerationDir.toPath(), null, ".profdata")
         val profdataStart = System.nanoTime()
-        val p = environment.hostMachine.createProcess(
+        val p = environment.hostMachine.runProcess(
             GeneralCommandLine(listOf(
                 myLLVMProf,
                 "merge",
                 "-output=${tempFile}"
             ) + files.map { environment.toEnvPath(it.absolutePath) })
                 .withWorkDirectory(environment.toEnvPath(configurationGenerationDir.absolutePath)),
-            false,
-            false
+            indicator,
+            -1
         )
-        var retCode = p.process.waitFor()
-        val lines = p.process.errorStream.bufferedReader().readLines()
-        if (retCode != 0) {
+        indicator.checkCanceled()
+        if (p.exitCode != 0) {
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
-                    "llvm-profdata returned error code $retCode with error output:\n${
-                        lines.joinToString(
-                            "\n"
-                        )
+                    "llvm-profdata returned error code ${p.exitCode} with error output:\n${
+                        p.stderr
                     }",
                     NotificationType.ERROR
                 ).notify(configuration.project)
@@ -591,25 +612,24 @@ class LLVMCoverageGenerator(
                     configurationGenerationDir.absolutePath
                 )
             ),
-            null,
+            indicator,
             -1
         )
         tempFile.delete()
+        indicator.checkCanceled()
         val result = llvmCov.stdout
-        retCode = llvmCov.exitCode
-        if (retCode != 0) {
-            val errorOutput = llvmCov.stderrLines
+        if (llvmCov.exitCode != 0) {
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
-                    "llvm-cov returned error code $retCode",
+                    "llvm-cov returned error code ${llvmCov.exitCode}",
                     "Invocation and error output:",
-                    "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
+                    "Invocation: ${input.joinToString(" ")}\n Stderr: ${llvmCov.stderr}",
                     NotificationType.ERROR
                 ).notify(configuration.project)
             return null
         }
         log.info("LLVM cov took ${System.nanoTime() - covStart}ns")
 
-        return processJson(result, environment, configuration.project)
+        return processJson(result, environment, configuration.project, indicator)
     }
 }

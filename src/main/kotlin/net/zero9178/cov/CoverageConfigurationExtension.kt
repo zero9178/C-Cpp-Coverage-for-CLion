@@ -132,7 +132,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                 } else {
                     ProgressManager.getInstance()
                         .run(object : Task.Backgroundable(
-                            configuration.project, "Gathering coverage...", false,
+                            configuration.project, "Gathering coverage...", true,
                             PerformInBackgroundOption.DEAF
                         ) {
                             override fun run(indicator: ProgressIndicator) {
@@ -141,7 +141,8 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     getCoverageGenerator(environment, configuration.project)?.generateCoverage(
                                         configuration,
                                         environment,
-                                        executionTarget
+                                        executionTarget,
+                                        indicator
                                     )
                                 val root = DefaultMutableTreeNode("invisible-root")
                                 invokeLater {

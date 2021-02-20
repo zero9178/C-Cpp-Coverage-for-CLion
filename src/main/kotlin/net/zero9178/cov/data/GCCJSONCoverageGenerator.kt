@@ -9,6 +9,8 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -31,6 +33,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
 class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
@@ -381,31 +384,42 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             )
         }
 
-        val files = filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
+        val files = try {
+            filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
 
-            CompletableFuture.supplyAsync {
-                it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
-                    val linesOfFunction = file.lines.groupBy { it.functionName }
-                    val functions = file.functions.map { function ->
-                        val lines = linesOfFunction[function.name] ?: emptyList()
-                        CoverageFunctionData(
-                            function.startLine.toInt(),
-                            function.endLine.toInt(),
-                            function.demangledName,
-                            FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
-                            if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
-                                findStatementsForBranches(
-                                    lines,
-                                    env.toLocalPath(file.file),
-                                    project
-                                ) else emptyList()
-                        )
-                    }.associateBy { it.functionName }
-                    CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
+                CompletableFuture.supplyAsync {
+                    it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
+                        val linesOfFunction = file.lines.groupBy { it.functionName }
+                        val functions = file.functions.map { function ->
+                            ProgressManager.checkCanceled()
+                            val lines = linesOfFunction[function.name] ?: emptyList()
+                            CoverageFunctionData(
+                                function.startLine.toInt(),
+                                function.endLine.toInt(),
+                                function.demangledName,
+                                FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
+                                if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
+                                    findStatementsForBranches(
+                                        lines,
+                                        env.toLocalPath(file.file),
+                                        project
+                                    ) else emptyList()
+                            )
+                        }.associateBy { it.functionName }
+                        CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
+                    }
                 }
-            }
 
-        }.flatMap { it.get() }.associateBy { it.filePath }
+            }.flatMap { it.join() }.associateBy { it.filePath }
+        } catch (e: CompletionException) {
+            val cause = e.cause
+            if (cause != null) {
+                throw cause
+            } else {
+                throw e
+            }
+        }
+        ProgressManager.checkCanceled()
 
         return CoverageData(
             files,
@@ -476,6 +490,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                     val functionName = line.string("function_name") ?: ""
                     Line(branches, count, lineNumber, functionName)
                 } ?: return@fileMap null
+                ProgressManager.checkCanceled()
                 File(file, functions, lines)
             } ?: return@flatMap emptyList()
             val root = Root(currentWorkingDirectory, files)
@@ -510,7 +525,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
+        executionTarget: ExecutionTarget,
+        indicator: ProgressIndicator
     ): CoverageData? {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
@@ -530,7 +546,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         } else {
             emptyList()
         } + files
-        val p = environment.hostMachine.runProcess(GeneralCommandLine(command), null, -1)
+        val p = environment.hostMachine.runProcess(GeneralCommandLine(command), indicator, -1)
+        indicator.checkCanceled()
         val lines = p.stdoutLines
         val retCode = p.exitCode
         if (retCode != 0) {
