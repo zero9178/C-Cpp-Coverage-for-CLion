@@ -30,6 +30,7 @@ For further details, known issues and differences of compilers see <a href="http
 
     <depends>com.intellij.modules.clion</depends>
     <depends>com.intellij.modules.lang</depends>
+    <depends optional="true" config-file="dummy.xml">org.jetbrains.plugins.clion.ctest</depends>
 
     <actions>
         <action class="net.zero9178.cov.actions.CoverageButton" description="Run with Coverage"

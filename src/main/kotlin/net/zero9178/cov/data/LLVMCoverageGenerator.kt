@@ -26,12 +26,15 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.io.delete
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
+import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
+import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
 import java.nio.file.Files
@@ -546,10 +549,10 @@ class LLVMCoverageGenerator(
         executionTarget: ExecutionTarget,
         indicator: ProgressIndicator
     ): CoverageData? {
-        val config = configuration.getBuildAndRunConfigurations(executionTarget)?.runConfiguration
-        val configurationGenerationDir = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
+        val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
-        )?.configurationGenerationDir ?: return null
+        ) ?: return null
+        val configurationGenerationDir = config.configurationGenerationDir
 
         val files = configurationGenerationDir.listFiles()
             ?.filter { it.name.endsWith("profraw") } ?: emptyList()
@@ -557,9 +560,10 @@ class LLVMCoverageGenerator(
         val tempFile = Files.createTempFile(configurationGenerationDir.toPath(), null, ".profdata")
         val profdataStart = System.nanoTime()
         val p = environment.hostMachine.runProcess(
-            GeneralCommandLine(listOf(
-                myLLVMProf,
-                "merge",
+            GeneralCommandLine(
+                listOf(
+                    myLLVMProf,
+                    "merge",
                 "-output=${tempFile}"
             ) + files.map { environment.toEnvPath(it.absolutePath) })
                 .withWorkDirectory(environment.toEnvPath(configurationGenerationDir.absolutePath)),
@@ -581,16 +585,21 @@ class LLVMCoverageGenerator(
 
         files.forEach { it.delete() }
 
-        val executable = if (config != null) {
-            listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
-        } else {
-            // Just put em all in for now
-            CMakeWorkspace.getInstance(configuration.project).modelTargets.filter {
-                it.isExecutable
-            }.mapNotNull { executable ->
-                executable.buildConfigurations.find { it.configurationGenerationDir == configurationGenerationDir }?.productFile?.toString()
+        val executable =
+            if (!isCTestInstalled()
+                || configuration !is CMakeTestRunConfiguration
+            ) {
+                listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
+            } else {
+                val testData = configuration.testData
+                if (testData !is CidrCTestRunConfigurationData) {
+                    listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
+                } else {
+                    testData.infos?.mapNotNull {
+                        it?.command?.exePath
+                    }?.distinct() ?: emptyList()
+                }
             }
-        }
 
         if (executable.isEmpty()) {
             return null
