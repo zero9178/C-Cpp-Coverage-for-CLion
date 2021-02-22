@@ -20,6 +20,7 @@ import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.execution.coverage.CMakeCoverageBuildOptionsInstallerFactory
 import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
+import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.execution.CidrBuildTarget
 import com.jetbrains.cidr.execution.CidrRunConfiguration
@@ -34,6 +35,7 @@ import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.CoverageGenerator
 import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.settings.CoverageGeneratorSettings
+import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.window.CoverageView
 import java.nio.file.Paths
 import javax.swing.event.HyperlinkEvent
@@ -102,7 +104,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
-                if (!hasCompilerFlags(configuration) && wasExplicitlyRequested) {
+                if (hasCompilerFlags(configuration) == false && wasExplicitlyRequested) {
                     val factory = CMakeCoverageBuildOptionsInstallerFactory()
                     val installer = factory.getInstaller(configuration)
                     if (installer != null && installer.canInstall(configuration, configuration.project)) {
@@ -220,15 +222,17 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         return coverageGenerator
     }
 
-    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration): Boolean {
+    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration): Boolean? {
         val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
-        // I am in a bit of dilemma here. The problem is that I don't want the plugin to depend on CTest
-        // just to check whether the runConfiguration is a CTest run. Those have no runConfiguration and therefore
-        // there's no way for me to check whether it has compiler flags or not because CLion seems to pick
-        // whatever random target (that mustn't even be a library or executable CMake target) as target
-        // when running all CTests
-        val runConfiguration = configuration.getBuildAndRunConfigurations(executionTarget)?.runConfiguration
-            ?: return configuration is CMakeTestRunConfiguration
+        val runConfiguration =
+            if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
+                // Returning null here means we don't know. How this is handled depends on the caller
+                // We could maybe handle this in the future by searching if any of the executables used by CTest
+                // are built with the right flags
+                return null
+            } else {
+                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration ?: return null
+            }
         return CLanguageKind.values().any { kind ->
             val list = runConfiguration.getCombinedCompilerFlags(kind, null)
             list.contains("--coverage") || list.containsAll(

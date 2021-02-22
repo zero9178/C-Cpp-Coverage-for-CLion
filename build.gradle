@@ -27,7 +27,7 @@ dependencies {
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
     version 'LATEST-EAP-SNAPSHOT'
-    plugins = ['com.intellij.clion','com.intellij.cidr.base','com.intellij.cidr.lang']
+    plugins = ['com.intellij.clion','com.intellij.cidr.base','com.intellij.cidr.lang','clion-ctest']
     type 'CL'
 }
 runIde {
