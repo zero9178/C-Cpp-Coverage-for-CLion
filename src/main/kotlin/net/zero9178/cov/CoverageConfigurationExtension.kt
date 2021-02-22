@@ -18,7 +18,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
-import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.execution.coverage.CMakeCoverageBuildOptionsInstallerFactory
 import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
 import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
@@ -102,10 +101,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
             return
         }
         val wasExplicitlyRequested = explicitlyRequested(configuration)
-        val executionTarget = ExecutionTargetManager.getTargetsToChooseFor(configuration.project, configuration)
-            .filterIsInstance<CMakeBuildProfileExecutionTarget>().find {
-                it.profileName == configuration.targetAndConfigurationData?.configurationName
-            } ?: ExecutionTargetManager.getInstance(configuration.project).activeTarget
+        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
                 if (hasCompilerFlags(configuration) == false && wasExplicitlyRequested) {
@@ -227,10 +223,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
     }
 
     private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration): Boolean? {
-        val executionTarget = ExecutionTargetManager.getTargetsToChooseFor(configuration.project, configuration)
-            .filterIsInstance<CMakeBuildProfileExecutionTarget>().find {
-                it.profileName == configuration.targetAndConfigurationData?.configurationName
-            } ?: ExecutionTargetManager.getInstance(configuration.project).activeTarget
+        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         val runConfiguration =
             if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
                 // Returning null here means we don't know. How this is handled depends on the caller
