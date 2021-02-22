@@ -33,9 +33,9 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
         var ifBranchCoverageEnabled: Boolean = true,
         var loopBranchCoverageEnabled: Boolean = true,
         var conditionalExpBranchCoverageEnabled: Boolean = true,
-        var booleanOpBranchCoverageEnabled: Boolean = false,
+        var booleanOpBranchCoverageEnabled: Boolean = true,
         var branchCoverageEnabled: Boolean = true,
-        var useCoverageAction: Boolean = false,
+        var useCoverageAction: Boolean = true,
         var calculateExternalSources: Boolean = false
     )
 
