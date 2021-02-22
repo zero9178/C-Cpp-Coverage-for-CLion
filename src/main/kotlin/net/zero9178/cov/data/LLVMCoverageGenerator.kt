@@ -26,6 +26,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.io.delete
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
 import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
@@ -62,7 +63,10 @@ class LLVMCoverageGenerator(
         environment: CPPEnvironment,
         cmdLine: GeneralCommandLine
     ) {
-        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
+        val executionTarget = ExecutionTargetManager.getTargetsToChooseFor(configuration.project, configuration)
+            .filterIsInstance<CMakeBuildProfileExecutionTarget>().find {
+                it.profileName == configuration.targetAndConfigurationData?.configurationName
+            } ?: ExecutionTargetManager.getInstance(configuration.project).activeTarget
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return
@@ -564,8 +568,8 @@ class LLVMCoverageGenerator(
                 listOf(
                     myLLVMProf,
                     "merge",
-                "-output=${tempFile}"
-            ) + files.map { environment.toEnvPath(it.absolutePath) })
+                    "-output=${tempFile}"
+                ) + files.map { environment.toEnvPath(it.absolutePath) })
                 .withWorkDirectory(environment.toEnvPath(configurationGenerationDir.absolutePath)),
             indicator,
             -1
