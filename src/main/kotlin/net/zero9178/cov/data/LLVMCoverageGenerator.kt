@@ -595,7 +595,7 @@ class LLVMCoverageGenerator(
                 if (testData !is CidrCTestRunConfigurationData) {
                     listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
                 } else {
-                    testData.infos?.mapNotNull {
+                    testData.testListCopy?.mapNotNull {
                         it?.command?.exePath
                     }?.distinct() ?: emptyList()
                 }
