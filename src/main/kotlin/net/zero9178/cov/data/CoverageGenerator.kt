@@ -14,6 +14,7 @@ interface CoverageGenerator {
     fun patchEnvironment(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
+        executionTarget: ExecutionTarget,
         cmdLine: GeneralCommandLine
     ) {
     }
