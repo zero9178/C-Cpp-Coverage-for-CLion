@@ -339,7 +339,7 @@ class LLVMCoverageGenerator(
             val commandLine = listOf(myDemangler) + if (isUndname) {
                 listOf("--no-calling-convention", "@${tempFile.fileName}")
             } else {
-                listOf("@${tempFile.fileName}")
+                listOf("-n", "@${tempFile.fileName}")
             }
 
             val p = environment.hostMachine.runProcess(
