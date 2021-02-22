@@ -280,7 +280,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
         return if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
             val testData = configuration.testData as CidrCTestRunConfigurationData
-            testData.infos?.mapNotNull {
+            testData.testListCopy?.mapNotNull {
                 it?.command?.exePath
             }?.distinct()?.mapNotNull { executable ->
                 CMakeWorkspace.getInstance(configuration.project).modelTargets.mapNotNull { target ->
