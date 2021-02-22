@@ -18,9 +18,13 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.wm.ToolWindowManager
+import com.jetbrains.cidr.cpp.cmake.model.CMakeConfiguration
+import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.execution.coverage.CMakeCoverageBuildOptionsInstallerFactory
 import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
 import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
@@ -137,7 +141,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         val wasExplicitlyRequested = explicitlyRequested(configuration)
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
-                if (hasCompilerFlags(configuration, executionTarget) == false && wasExplicitlyRequested) {
+                if (!hasCompilerFlags(configuration, executionTarget) && wasExplicitlyRequested) {
                     val factory = CMakeCoverageBuildOptionsInstallerFactory()
                     val installer = factory.getInstaller(configuration)
                     if (installer != null && installer.canInstall(configuration, configuration.project)) {
@@ -255,26 +259,43 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         return coverageGenerator
     }
 
-    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration, executionTarget: ExecutionTarget): Boolean? {
-        val runConfiguration =
-            if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
-                // Returning null here means we don't know. How this is handled depends on the caller
-                // We could maybe handle this in the future by searching if any of the executables used by CTest
-                // are built with the right flags
-                return null
-            } else {
-                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration ?: return null
+    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration, executionTarget: ExecutionTarget): Boolean {
+        if (executionTarget !is CMakeBuildProfileExecutionTarget) {
+            return false
+        }
+
+        fun hasCompilerFlagsImpl(runConfiguration: CMakeConfiguration): Boolean {
+            return CLanguageKind.values().any { kind ->
+                val list = runConfiguration.getCombinedCompilerFlags(kind, null)
+                list.contains("--coverage") || list.containsAll(
+                    listOf(
+                        "-fprofile-arcs",
+                        "-ftest-coverage"
+                    )
+                ) || (list.contains("-fcoverage-mapping") && list.any {
+                    it.matches("-fprofile-instr-generate(=.*)?".toRegex())
+                })
             }
-        return CLanguageKind.values().any { kind ->
-            val list = runConfiguration.getCombinedCompilerFlags(kind, null)
-            list.contains("--coverage") || list.containsAll(
-                listOf(
-                    "-fprofile-arcs",
-                    "-ftest-coverage"
-                )
-            ) || (list.contains("-fcoverage-mapping") && list.any {
-                it.matches("-fprofile-instr-generate(=.*)?".toRegex())
-            })
+        }
+
+        return if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
+            val testData = configuration.testData as CidrCTestRunConfigurationData
+            testData.infos?.mapNotNull {
+                it?.command?.exePath
+            }?.distinct()?.mapNotNull { executable ->
+                CMakeWorkspace.getInstance(configuration.project).modelTargets.mapNotNull { target ->
+                    target.buildConfigurations.find { it.profileName == executionTarget.profileName }
+                }.find {
+                    it.productFile?.name == executable.substringAfterLast(
+                        '/',
+                        if (SystemInfo.isWindows) executable.substringAfterLast('\\') else executable
+                    )
+                }
+            }?.any(::hasCompilerFlagsImpl) ?: false
+        } else {
+            val runConfiguration =
+                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration ?: return false
+            hasCompilerFlagsImpl(runConfiguration)
         }
     }
 
