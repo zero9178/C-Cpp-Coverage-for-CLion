@@ -5,7 +5,6 @@ import com.beust.klaxon.JsonObject
 import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
-import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -60,9 +59,9 @@ class LLVMCoverageGenerator(
     override fun patchEnvironment(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
+        executionTarget: ExecutionTarget,
         cmdLine: GeneralCommandLine
     ) {
-        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return
