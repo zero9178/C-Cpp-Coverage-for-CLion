@@ -1,6 +1,8 @@
 package net.zero9178.cov
 
+import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.ExecutionTargetManager
+import com.intellij.execution.configurations.CommandLineState
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunnerSettings
 import com.intellij.execution.process.ProcessAdapter
@@ -14,9 +16,18 @@ import com.intellij.openapi.progress.PerformInBackgroundOption
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.wm.ToolWindowManager
+import com.jetbrains.cidr.cpp.cmake.model.CMakeConfiguration
+import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.execution.coverage.CMakeCoverageBuildOptionsInstallerFactory
+import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
+import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.execution.CidrBuildTarget
 import com.jetbrains.cidr.execution.CidrRunConfiguration
@@ -24,7 +35,6 @@ import com.jetbrains.cidr.execution.CidrRunConfigurationExtensionBase
 import com.jetbrains.cidr.execution.ConfigurationExtensionContext
 import com.jetbrains.cidr.execution.coverage.CidrCoverageProgramRunner
 import com.jetbrains.cidr.lang.CLanguageKind
-import com.jetbrains.cidr.lang.toolchains.CidrCompilerSwitches
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
 import net.zero9178.cov.actions.STARTED_BY_COVERAGE_BUTTON
 import net.zero9178.cov.data.CoverageFileData
@@ -32,17 +42,19 @@ import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.CoverageGenerator
 import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.settings.CoverageGeneratorSettings
+import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.window.CoverageView
+import java.io.File
 import java.nio.file.Paths
 import javax.swing.event.HyperlinkEvent
 import javax.swing.tree.DefaultMutableTreeNode
 
+private val EXECUTION_TARGET_USED = Key<ExecutionTarget>("EXECUTION_TARGET_USED")
+private val GENERAL_COMMAND_LINE = Key<GeneralCommandLine>("GENERAL_COMMAND_LINE")
+
 class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
     override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>): Boolean {
-        if (configuration !is CMakeAppRunConfiguration) {
-            return false
-        }
         return if (CoverageGeneratorSettings.getInstance().useCoverageAction) {
             val startedByCoverageButton: Boolean? = configuration.getUserData(STARTED_BY_COVERAGE_BUTTON)
             !(startedByCoverageButton == null || startedByCoverageButton == false)
@@ -56,14 +68,41 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         environment: CidrToolEnvironment,
         runnerSettings: RunnerSettings?
     ): Boolean {
-        if (environment !is CPPEnvironment || applicableConfiguration !is CMakeAppRunConfiguration) {
+        if (environment !is CPPEnvironment) {
             return false
         }
         // Don't check for flags if the user explicitly requested it
         if (explicitlyRequested(applicableConfiguration)) {
             return true
         }
-        return hasCompilerFlags(applicableConfiguration)
+        return (applicableConfiguration as? CMakeAppRunConfiguration)?.let {
+            hasCompilerFlags(it, ExecutionTargetManager.getActiveTarget(applicableConfiguration.project))
+        } ?: false
+    }
+
+    override fun patchCommandLineState(
+        configuration: CidrRunConfiguration<*, out CidrBuildTarget<*>>,
+        runnerSettings: RunnerSettings?,
+        environment: CidrToolEnvironment,
+        projectBaseDir: File?,
+        state: CommandLineState,
+        runnerId: String,
+        context: ConfigurationExtensionContext
+    ) {
+        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
+                runnerId
+            ) is CidrCoverageProgramRunner
+        ) {
+            return
+        }
+        context.putUserData(EXECUTION_TARGET_USED, state.executionTarget)
+        val commandLine = context.getUserData(GENERAL_COMMAND_LINE) ?: return
+        getCoverageGenerator(environment, configuration.project)?.patchEnvironment(
+            configuration,
+            environment,
+            state.executionTarget,
+            commandLine
+        )
     }
 
     override fun patchCommandLine(
@@ -74,13 +113,14 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
-                runnerId
-            ) is CidrCoverageProgramRunner
-        ) {
-            return
-        }
-        getCoverageGenerator(environment, configuration)?.patchEnvironment(configuration, environment, cmdLine)
+        // Have to be super careful about this in the future possibly. Problem is that currently (2020.3) patchCommandLine
+        // gets called before patchCommandLineState. patchCommandLine needs to know the execution target used
+        // to determine which generate needs to be used, to call the generator's patchEnvironment function.
+        // We only get the execution target once in patchCommandLineState though. So instead we put the
+        // GeneralCommandLine into the context and patch everything once in patchCommandLineState. This is fragile
+        // however and depends on 1) the order of the two calls 2) cmdLine still being allowed to be modified
+        // from within patchCommandLineState. I don't know of a better solution as of this moment however
+        context.putUserData(GENERAL_COMMAND_LINE, cmdLine)
     }
 
     override fun attachToProcess(
@@ -91,17 +131,17 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
+        val executionTarget = context.getUserData(EXECUTION_TARGET_USED)
+        if (executionTarget == null || environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
                 runnerId
             ) is CidrCoverageProgramRunner
         ) {
             return
         }
         val wasExplicitlyRequested = explicitlyRequested(configuration)
-        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
-                if (!hasCompilerFlags(configuration) && wasExplicitlyRequested) {
+                if (!hasCompilerFlags(configuration, executionTarget) && wasExplicitlyRequested) {
                     val factory = CMakeCoverageBuildOptionsInstallerFactory()
                     val installer = factory.getInstaller(configuration)
                     if (installer != null && installer.canInstall(configuration, configuration.project)) {
@@ -131,16 +171,17 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                 } else {
                     ProgressManager.getInstance()
                         .run(object : Task.Backgroundable(
-                            configuration.project, "Gathering coverage...", false,
+                            configuration.project, "Gathering coverage...", true,
                             PerformInBackgroundOption.DEAF
                         ) {
                             override fun run(indicator: ProgressIndicator) {
                                 indicator.isIndeterminate = true
                                 val data =
-                                    getCoverageGenerator(environment, configuration)?.generateCoverage(
+                                    getCoverageGenerator(environment, configuration.project)?.generateCoverage(
                                         configuration,
                                         environment,
-                                        executionTarget
+                                        executionTarget,
+                                        indicator
                                     )
                                 val root = DefaultMutableTreeNode("invisible-root")
                                 invokeLater {
@@ -193,7 +234,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
     private fun getCoverageGenerator(
         environment: CPPEnvironment,
-        configuration: CMakeAppRunConfiguration
+        project: Project
     ): CoverageGenerator? {
         val generator = CoverageGeneratorSettings.getInstance().getGeneratorFor(environment.toolchain.name)
         if (generator == null) {
@@ -201,7 +242,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                 .createNotification(
                     "Neither gcov nor llvm-cov specified for ${environment.toolchain.name}",
                     NotificationType.ERROR
-                ).notify(configuration.project)
+                ).notify(project)
             return null
         }
         val coverageGenerator = generator.first
@@ -211,31 +252,54 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                     .createNotification(
                         "Coverage could not be generated due to following error: ${generator.second}",
                         NotificationType.ERROR
-                    ).notify(configuration.project)
+                    ).notify(project)
             }
             return null
         }
         return coverageGenerator
     }
 
-    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration): Boolean {
-        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
-        val resolver = configuration.getResolveConfiguration(executionTarget) ?: return false
-        return CLanguageKind.values().any {
-            val switches = resolver.getCompilerSettings(it).compilerSwitches ?: return@any false
-            val list = switches.getList(CidrCompilerSwitches.Format.RAW)
-            list.contains("--coverage") || list.containsAll(
-                listOf(
-                    "-fprofile-arcs",
-                    "-ftest-coverage"
-                )
-            ) || list.containsAll(
-                listOf("-fprofile-instr-generate", "-fcoverage-mapping")
-            )
+    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration, executionTarget: ExecutionTarget): Boolean {
+        if (executionTarget !is CMakeBuildProfileExecutionTarget) {
+            return false
+        }
+
+        fun hasCompilerFlagsImpl(runConfiguration: CMakeConfiguration): Boolean {
+            return CLanguageKind.values().any { kind ->
+                val list = runConfiguration.getCombinedCompilerFlags(kind, null)
+                list.contains("--coverage") || list.containsAll(
+                    listOf(
+                        "-fprofile-arcs",
+                        "-ftest-coverage"
+                    )
+                ) || (list.contains("-fcoverage-mapping") && list.any {
+                    it.matches("-fprofile-instr-generate(=.*)?".toRegex())
+                })
+            }
+        }
+
+        return if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
+            val testData = configuration.testData as CidrCTestRunConfigurationData
+            testData.infos?.mapNotNull {
+                it?.command?.exePath
+            }?.distinct()?.mapNotNull { executable ->
+                CMakeWorkspace.getInstance(configuration.project).modelTargets.mapNotNull { target ->
+                    target.buildConfigurations.find { it.profileName == executionTarget.profileName }
+                }.find {
+                    it.productFile?.name == executable.substringAfterLast(
+                        '/',
+                        if (SystemInfo.isWindows) executable.substringAfterLast('\\') else executable
+                    )
+                }
+            }?.any(::hasCompilerFlagsImpl) ?: false
+        } else {
+            val runConfiguration =
+                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration ?: return false
+            hasCompilerFlagsImpl(runConfiguration)
         }
     }
 
-    private fun explicitlyRequested(configuration: CMakeAppRunConfiguration): Boolean {
+    private fun explicitlyRequested(configuration: UserDataHolder): Boolean {
         return CoverageGeneratorSettings.getInstance().useCoverageAction && configuration.getUserData(
             STARTED_BY_COVERAGE_BUTTON
         ) == true

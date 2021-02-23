@@ -8,6 +8,8 @@ import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
@@ -16,6 +18,7 @@ import net.zero9178.cov.settings.CoverageGeneratorSettings
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
 class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVersion: Int) :
@@ -41,7 +44,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         lines: List<List<String>>,
         project: Project,
         env: CPPEnvironment
-    ): CoverageData? {
+    ): CoverageData {
 
         abstract class GCovCommonGrammar : Grammar<List<Item>>() {
 
@@ -125,25 +128,35 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         }
 
         val result = lines.chunked(ceil(lines.size.toDouble() / Thread.activeCount()).toInt()).map {
-            CompletableFuture.supplyAsync {
-                it.flatMap { gcovFile ->
-                    try {
-                        val ast = if (myMajorVersion == 8) {
-                            gcov8Grammer.parseToEnd(gcovFile.joinToString("\n"))
-                        } else {
-                            govUnder8Grammer.parseToEnd(gcovFile.joinToString("\n"))
+            try {
+                CompletableFuture.supplyAsync {
+                    it.flatMap { gcovFile ->
+                        ProgressManager.checkCanceled()
+                        try {
+                            val ast = if (myMajorVersion == 8) {
+                                gcov8Grammer.parseToEnd(gcovFile.joinToString("\n"))
+                            } else {
+                                govUnder8Grammer.parseToEnd(gcovFile.joinToString("\n"))
+                            }
+                            ast.filter { it !is Item.Branch }
+                        } catch (e: ParseException) {
+                            NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
+                                .createNotification(
+                                    "Error parsing gcov generated files",
+                                    "This is either due to a bug in the plugin or gcov",
+                                    "Parser output:${e.errorResult}",
+                                    NotificationType.ERROR
+                                ).notify(project)
+                            emptyList()
                         }
-                        ast.filter { it !is Item.Branch }
-                    } catch (e: ParseException) {
-                        NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
-                            .createNotification(
-                                "Error parsing gcov generated files",
-                                "This is either due to a bug in the plugin or gcov",
-                                "Parser output:${e.errorResult}",
-                                NotificationType.ERROR
-                            ).notify(project)
-                        emptyList()
                     }
+                }
+            } catch (e: CompletionException) {
+                val cause = e.cause
+                if (cause != null) {
+                    throw cause
+                } else {
+                    throw e
                 }
             }
         }.flatMap { it.get() }
@@ -196,7 +209,8 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
+        executionTarget: ExecutionTarget,
+        indicator: ProgressIndicator
     ): CoverageData? {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
@@ -213,8 +227,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                     "-i",
                     "-m"
                 ) + files
-            ).withWorkDirectory(config.configurationGenerationDir), null, -1
+            ).withWorkDirectory(config.configurationGenerationDir), indicator, -1
         )
+        indicator.checkCanceled()
         val lines = p.stdout
         val retCode = p.exitCode
         if (retCode != 0) {

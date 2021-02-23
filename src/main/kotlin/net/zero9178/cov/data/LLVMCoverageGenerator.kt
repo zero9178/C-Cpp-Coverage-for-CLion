@@ -5,12 +5,14 @@ import com.beust.klaxon.JsonObject
 import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
-import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -24,16 +26,20 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.io.delete
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
+import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
+import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.util.toCP
 import java.io.StringReader
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
@@ -54,16 +60,16 @@ class LLVMCoverageGenerator(
     override fun patchEnvironment(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
+        executionTarget: ExecutionTarget,
         cmdLine: GeneralCommandLine
     ) {
-        val executionTarget = ExecutionTargetManager.getInstance(configuration.project).activeTarget
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return
         cmdLine.withEnvironment(
             "LLVM_PROFILE_FILE",
             environment.toEnvPath(
-                config.configurationGenerationDir.resolve("${config.target.name}-%p.profraw").absolutePath
+                config.configurationGenerationDir.resolve("%4m.profraw").absolutePath
             )
         )
     }
@@ -96,7 +102,8 @@ class LLVMCoverageGenerator(
     private fun processJson(
         jsonContent: String,
         environment: CPPEnvironment,
-        project: Project
+        project: Project,
+        indicator: ProgressIndicator
     ): CoverageData {
         val jsonParseStart = System.nanoTime()
         val jsonObject = Parser.jackson().parse(StringReader(jsonContent)) as JsonObject
@@ -151,16 +158,17 @@ class LLVMCoverageGenerator(
         } ?: return CoverageData(emptyMap(), false, CoverageGeneratorSettings.getInstance().calculateExternalSources)
 
         log.info("JSON processing took ${System.nanoTime() - jsonProcessStart}ns")
-        return processRoot(data, environment, project)
+        return processRoot(data, environment, project, indicator)
     }
 
     private fun processRoot(
         datas: List<Data>,
         environment: CPPEnvironment,
-        project: Project
+        project: Project,
+        indicator: ProgressIndicator
     ): CoverageData {
         val mangledNames = datas.flatMap { data -> data.functions.map { it.name } }
-        val demangledNames = demangle(environment, mangledNames)
+        val demangledNames = demangle(environment, mangledNames, indicator)
 
         val processDataStart = System.nanoTime()
         val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
@@ -194,20 +202,38 @@ class LLVMCoverageGenerator(
                     emptyList()
                 )
 
-                val functionsMap = if (myMajorVersion >= 12) {
+                val functionsMap = if (myMajorVersion >= 12 || !CoverageGeneratorSettings.getInstance()
+                        .branchCoverageEnabled
+                ) {
                     processFunctions(environment, project, demangledNames, file, llvmFunctions)
                 } else {
-                    llvmFunctions.chunked(
-                        ceil(
-                            data.files.size / Thread.activeCount()
-                                .toDouble()
-                        ).toInt()
-                    ).map { functions ->
-                        CompletableFuture.supplyAsync {
-                            processFunctions(environment, project, demangledNames, file, functions)
+                    DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageFunctionData>> {
+                        ProgressManager.checkCanceled()
+                        try {
+                            llvmFunctions.chunked(
+                                ceil(
+                                    data.files.size / Thread.activeCount()
+                                        .toDouble()
+                                ).toInt()
+                            ).map { functions ->
+                                CompletableFuture.supplyAsync {
+                                    runReadAction {
+                                        processFunctions(environment, project, demangledNames, file, functions)
+                                    }
+                                }
+                            }.flatMap { it.join() }
+                        } catch (e: CompletionException) {
+                            val cause = e.cause
+                            if (cause != null) {
+                                throw cause
+                            } else {
+                                throw e
+                            }
                         }
-                    }.flatMap { it.get() }
+                    }
                 }.associateBy { it.functionName }
+
+                ProgressManager.checkCanceled()
 
                 result + CoverageFileData(
                     filePath,
@@ -279,6 +305,7 @@ class LLVMCoverageGenerator(
                     val nonGaps = regions.filter {
                         it.regionKind != GAP
                     }
+                    ProgressManager.checkCanceled()
                     findStatementsForBranches(
                         regions.first().start, regions.last().end,
                         nonGaps.toMutableList(),
@@ -286,6 +313,7 @@ class LLVMCoverageGenerator(
                         project
                     )
                 } else {
+                    ProgressManager.checkCanceled()
                     function.branches.filter {
                         function.filenames[it.fileId] == file
                     }.map {
@@ -302,7 +330,8 @@ class LLVMCoverageGenerator(
 
     private fun demangle(
         environment: CPPEnvironment,
-        mangledNames: List<String>
+        mangledNames: List<String>,
+        indicator: ProgressIndicator
     ): Map<String, String> {
         if (mangledNames.isEmpty()) {
             return emptyMap()
@@ -318,7 +347,7 @@ class LLVMCoverageGenerator(
             val commandLine = listOf(myDemangler) + if (isUndname) {
                 listOf("--no-calling-convention", "@${tempFile.fileName}")
             } else {
-                listOf("@${tempFile.fileName}")
+                listOf("-n", "@${tempFile.fileName}")
             }
 
             val p = environment.hostMachine.runProcess(
@@ -327,9 +356,10 @@ class LLVMCoverageGenerator(
                 ).withRedirectErrorStream(
                     true
                 ).withWorkDirectory(tempFile.parent.toString()),
-                null,
+                indicator,
                 -1
             )
+            indicator.checkCanceled()
             var result = p.stdoutLines
             tempFile.delete()
             result = if (!isUndname) {
@@ -365,190 +395,190 @@ class LLVMCoverageGenerator(
         if (regions.isEmpty()) {
             return emptyList()
         }
-        return DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageBranchData>> {
-            val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return@runReadActionInSmartMode emptyList()
-            val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return@runReadActionInSmartMode emptyList()
-            val document =
-                PsiDocumentManager.getInstance(project).getDocument(psiFile)
-                    ?: return@runReadActionInSmartMode emptyList()
+        val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return emptyList()
+        val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return emptyList()
+        val document =
+            PsiDocumentManager.getInstance(project).getDocument(psiFile)
+                ?: return emptyList()
 
-            val startOffset = if (functionStart.first - 1 >= document.lineCount) {
-                document.getLineEndOffset(document.lineCount - 1)
-            } else {
-                document.getLineStartOffset(functionStart.first - 1) + functionStart.second - 1
+        val startOffset = if (functionStart.first - 1 >= document.lineCount) {
+            document.getLineEndOffset(document.lineCount - 1)
+        } else {
+            document.getLineStartOffset(functionStart.first - 1) + functionStart.second - 1
+        }
+        val endOffset = if (functionEnd.first - 1 >= document.lineCount) {
+            document.getLineEndOffset(document.lineCount - 1)
+        } else {
+            document.getLineStartOffset(functionEnd.first - 1) + functionEnd.second - 1
+        }
+        val range = TextRange(startOffset, endOffset)
+
+        val branches = mutableListOf<CoverageBranchData>()
+
+        object : OCVisitor(), PsiRecursiveVisitor {
+            override fun visitElement(element: PsiElement) {
+                ProgressManager.checkCanceled()
+                super.visitElement(element)
+
+                var curr: PsiElement? = element.firstChild
+                while (curr != null) {
+                    val textRange = curr.textRange
+                    if (range.contains(textRange)) {
+                        curr.accept(this)
+                    } else if (range.intersects(textRange)) {
+                        visitElement(curr)
+                    }
+                    curr = curr.nextSibling
+                }
             }
-            val endOffset = if (functionEnd.first - 1 >= document.lineCount) {
-                document.getLineEndOffset(document.lineCount - 1)
-            } else {
-                document.getLineStartOffset(functionEnd.first - 1) + functionEnd.second - 1
+
+            override fun visitIfStatement(stmt: OCIfStatement?) {
+                stmt ?: return
+                stmt.initStatement?.accept(this)
+                stmt.condition?.accept(this)
+                try {
+                    if (!CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled) {
+                        return
+                    }
+                    val expression = stmt.condition?.expression ?: return
+                    val body = stmt.thenBranch ?: return
+                    matchCondThen(stmt.lParenth?.startOffset ?: stmt.textOffset, expression, body)
+                } finally {
+                    stmt.thenBranch?.accept(this)
+                    stmt.elseBranch?.accept(this)
+                }
             }
-            val range = TextRange(startOffset, endOffset)
 
-            val branches = mutableListOf<CoverageBranchData>()
+            override fun visitConditionalExpression(expression: OCConditionalExpression?) {
+                expression ?: return super.visitConditionalExpression(expression)
+                if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled) {
+                    return super.visitConditionalExpression(expression)
+                }
+                val pos =
+                    expression.getPositiveExpression(false) ?: return super.visitConditionalExpression(expression)
+                val neg = expression.negativeExpression ?: return super.visitConditionalExpression(expression)
+                val quest = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
+                    ?: return super.visitConditionalExpression(expression)
+                matchThenElse(quest.textOffset, pos, neg)
+                super.visitConditionalExpression(expression)
+            }
 
-            object : OCVisitor(), PsiRecursiveVisitor {
-                override fun visitElement(element: PsiElement) {
-                    super.visitElement(element)
-
-                    var curr: PsiElement? = element.firstChild
-                    while (curr != null) {
-                        val textRange = curr.textRange
-                        if (range.contains(textRange)) {
-                            curr.accept(this)
-                        } else if (range.intersects(textRange)) {
-                            visitElement(curr)
-                        }
-                        curr = curr.nextSibling
+            override fun visitBinaryExpression(expression: OCBinaryExpression?) {
+                expression ?: return super.visitBinaryExpression(expression)
+                if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled) {
+                    return super.visitBinaryExpression(expression)
+                }
+                when (expression.operationSignNode.text) {
+                    "||", "or", "&&", "and" -> {
+                        val left = expression.left ?: return
+                        val right = expression.right ?: return
+                        matchCondThen(expression.operationSignNode.startOffset, left, right, false)
                     }
                 }
+                super.visitBinaryExpression(expression)
+            }
 
-                override fun visitIfStatement(stmt: OCIfStatement?) {
-                    stmt ?: return
-                    stmt.initStatement?.accept(this)
-                    stmt.condition?.accept(this)
-                    try {
-                        if (!CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled) {
-                            return
-                        }
-                        val expression = stmt.condition?.expression ?: return
-                        val body = stmt.thenBranch ?: return
-                        matchCondThen(stmt.lParenth?.startOffset ?: stmt.textOffset, expression, body)
-                    } finally {
-                        stmt.thenBranch?.accept(this)
-                        stmt.elseBranch?.accept(this)
+            override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {
+                return
+            }
+
+            private fun find(element: OCElement, removeRegions: Boolean): Region? {
+                try {
+                    val startLine = document.getLineNumber(element.textOffset) + 1
+                    val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
+                    val startPos = startLine toCP startColumn
+                    val endLine = document.getLineNumber(element.textRange.endOffset) + 1
+                    val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
+                    val endPos = endLine toCP endColumn
+                    val conIndex = regions.indexOfFirst {
+                        it.start == startPos && it.end == endPos
                     }
-                }
-
-                override fun visitConditionalExpression(expression: OCConditionalExpression?) {
-                    expression ?: return super.visitConditionalExpression(expression)
-                    if (!CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled) {
-                        return super.visitConditionalExpression(expression)
-                    }
-                    val pos =
-                        expression.getPositiveExpression(false) ?: return super.visitConditionalExpression(expression)
-                    val neg = expression.negativeExpression ?: return super.visitConditionalExpression(expression)
-                    val quest = PsiTreeUtil.findSiblingForward(expression.condition, OCTokenTypes.QUEST, null)
-                        ?: return super.visitConditionalExpression(expression)
-                    matchThenElse(quest.textOffset, pos, neg)
-                    super.visitConditionalExpression(expression)
-                }
-
-                override fun visitBinaryExpression(expression: OCBinaryExpression?) {
-                    expression ?: return super.visitBinaryExpression(expression)
-                    if (!CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled) {
-                        return super.visitBinaryExpression(expression)
-                    }
-                    when (expression.operationSignNode.text) {
-                        "||", "or", "&&", "and" -> {
-                            val left = expression.left ?: return
-                            val right = expression.right ?: return
-                            matchCondThen(expression.operationSignNode.startOffset, left, right, false)
-                        }
-                    }
-                    super.visitBinaryExpression(expression)
-                }
-
-                override fun visitLambdaExpression(lambdaExpression: OCLambdaExpression?) {
-                    return
-                }
-
-                private fun find(element: OCElement, removeRegions: Boolean): Region? {
-                    try {
-                        val startLine = document.getLineNumber(element.textOffset) + 1
-                        val startColumn = element.textOffset - document.getLineStartOffset(startLine - 1) + 1
-                        val startPos = startLine toCP startColumn
-                        val endLine = document.getLineNumber(element.textRange.endOffset) + 1
-                        val endColumn = element.textRange.endOffset - document.getLineStartOffset(endLine - 1) + 1
-                        val endPos = endLine toCP endColumn
-                        val conIndex = regions.indexOfFirst {
-                            it.start == startPos && it.end == endPos
-                        }
-                        if (conIndex < 0) {
-                            //log.warn("Could not find Region that starts at $startPos to $endPos")
-                            return null
-                        }
-                        val result = regions[conIndex]
-                        if (removeRegions) {
-                            regions.removeAll(regions.slice(0..conIndex))
-                        }
-                        return result
-                    } catch (e: ProcessCanceledException) {
-                        throw e
-                    } catch (e: Exception) {
-                        log.warn(e)
+                    if (conIndex < 0) {
+                        //log.warn("Could not find Region that starts at $startPos to $endPos")
                         return null
                     }
+                    val result = regions[conIndex]
+                    if (removeRegions) {
+                        regions.removeAll(regions.slice(0..conIndex))
+                    }
+                    return result
+                } catch (e: ProcessCanceledException) {
+                    throw e
+                } catch (e: Exception) {
+                    log.warn(e)
+                    return null
                 }
+            }
 
-                private fun matchCondThen(
-                    offset: Int,
-                    condition: OCElement,
-                    body: OCElement,
-                    removeRegions: Boolean = true
-                ) {
-                    val conRegion = find(condition, removeRegions) ?: return
-                    val bodyRegion = find(body, removeRegions) ?: return
+            private fun matchCondThen(
+                offset: Int,
+                condition: OCElement,
+                body: OCElement,
+                removeRegions: Boolean = true
+            ) {
+                val conRegion = find(condition, removeRegions) ?: return
+                val bodyRegion = find(body, removeRegions) ?: return
 
-                    val lineNumber = document.getLineNumber(offset)
-                    branches += CoverageBranchData(
-                        lineNumber + 1 toCP offset - document.getLineStartOffset(lineNumber) + 1,
-                        bodyRegion.executionCount.toInt(),
-                        (conRegion.executionCount - bodyRegion.executionCount).toInt()
-                    )
-                }
+                val lineNumber = document.getLineNumber(offset)
+                branches += CoverageBranchData(
+                    lineNumber + 1 toCP offset - document.getLineStartOffset(lineNumber) + 1,
+                    bodyRegion.executionCount.toInt(),
+                    (conRegion.executionCount - bodyRegion.executionCount).toInt()
+                )
+            }
 
-                private fun matchThenElse(
-                    offset: Int,
-                    thenBranch: OCElement,
-                    elseBranch: OCElement
-                ) {
-                    val thenRegion = find(thenBranch, false) ?: return
-                    val elseRegion = find(elseBranch, false) ?: return
+            private fun matchThenElse(
+                offset: Int,
+                thenBranch: OCElement,
+                elseBranch: OCElement
+            ) {
+                val thenRegion = find(thenBranch, false) ?: return
+                val elseRegion = find(elseBranch, false) ?: return
 
-                    val lineNumber = document.getLineNumber(offset)
-                    branches += CoverageBranchData(
-                        lineNumber + 1 toCP offset - document.getLineStartOffset(lineNumber) + 1,
-                        thenRegion.executionCount.toInt(),
-                        elseRegion.executionCount.toInt()
-                    )
-                }
-            }.visitElement(psiFile)
-            branches
-        }
+                val lineNumber = document.getLineNumber(offset)
+                branches += CoverageBranchData(
+                    lineNumber + 1 toCP offset - document.getLineStartOffset(lineNumber) + 1,
+                    thenRegion.executionCount.toInt(),
+                    elseRegion.executionCount.toInt()
+                )
+            }
+        }.visitElement(psiFile)
+        return branches
     }
 
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
+        executionTarget: ExecutionTarget,
+        indicator: ProgressIndicator
     ): CoverageData? {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return null
+        val configurationGenerationDir = config.configurationGenerationDir
 
-        val files = config.configurationGenerationDir.listFiles()
-            ?.filter { it.name.matches("${config.target.name}-\\d*.profraw".toRegex()) } ?: emptyList()
+        val files = configurationGenerationDir.listFiles()
+            ?.filter { it.name.endsWith("profraw") } ?: emptyList()
 
+        val tempFile = Files.createTempFile(configurationGenerationDir.toPath(), null, ".profdata")
         val profdataStart = System.nanoTime()
-        val p = environment.hostMachine.createProcess(
-            GeneralCommandLine(listOf(
-                myLLVMProf,
-                "merge",
-                "-output=${config.target.name}.profdata"
-            ) + files.map { environment.toEnvPath(it.absolutePath) })
-                .withWorkDirectory(environment.toEnvPath(config.configurationGenerationDir.absolutePath)),
-            false,
-            false
+        val p = environment.hostMachine.runProcess(
+            GeneralCommandLine(
+                listOf(
+                    myLLVMProf,
+                    "merge",
+                    "-output=${tempFile}"
+                ) + files.map { environment.toEnvPath(it.absolutePath) })
+                .withWorkDirectory(environment.toEnvPath(configurationGenerationDir.absolutePath)),
+            indicator,
+            -1
         )
-        var retCode = p.process.waitFor()
-        var lines = p.process.errorStream.bufferedReader().readLines()
-        if (retCode != 0) {
+        indicator.checkCanceled()
+        if (p.exitCode != 0) {
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
-                    "llvm-profdata returned error code $retCode with error output:\n${
-                        lines.joinToString(
-                            "\n"
-                        )
+                    "llvm-profdata returned error code ${p.exitCode} with error output:\n${
+                        p.stderr
                     }",
                     NotificationType.ERROR
                 ).notify(configuration.project)
@@ -558,38 +588,60 @@ class LLVMCoverageGenerator(
 
         files.forEach { it.delete() }
 
+        val executable =
+            if (!isCTestInstalled()
+                || configuration !is CMakeTestRunConfiguration
+            ) {
+                listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
+            } else {
+                val testData = configuration.testData
+                if (testData !is CidrCTestRunConfigurationData) {
+                    listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
+                } else {
+                    testData.infos?.mapNotNull {
+                        it?.command?.exePath
+                    }?.distinct() ?: emptyList()
+                }
+            }
+
+        if (executable.isEmpty()) {
+            return null
+        }
+
         val covStart = System.nanoTime()
         val input = listOf(
             myLLVMCov,
             "export",
             "-instr-profile",
-            "${config.target.name}.profdata",
-            environment.toEnvPath(config.productFile?.absolutePath ?: "")
-        )
+            "$tempFile",
+            executable.first()
+        ) + executable.flatMap {
+            listOf("-object", it)
+        }
         val llvmCov = environment.hostMachine.runProcess(
             GeneralCommandLine(input).withWorkDirectory(
                 environment.toEnvPath(
-                    config.configurationGenerationDir.absolutePath
+                    configurationGenerationDir.absolutePath
                 )
             ),
-            null,
+            indicator,
             -1
         )
-        lines = llvmCov.stdoutLines
-        retCode = llvmCov.exitCode
-        if (retCode != 0) {
-            val errorOutput = llvmCov.stderrLines
+        tempFile.delete()
+        indicator.checkCanceled()
+        val result = llvmCov.stdout
+        if (llvmCov.exitCode != 0) {
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
-                    "llvm-cov returned error code $retCode",
+                    "llvm-cov returned error code ${llvmCov.exitCode}",
                     "Invocation and error output:",
-                    "Invocation: ${input.joinToString(" ")}\n Stderr: $errorOutput",
+                    "Invocation: ${input.joinToString(" ")}\n Stderr: ${llvmCov.stderr}",
                     NotificationType.ERROR
                 ).notify(configuration.project)
             return null
         }
         log.info("LLVM cov took ${System.nanoTime() - covStart}ns")
 
-        return processJson(lines.joinToString(), environment, configuration.project)
+        return processJson(result, environment, configuration.project, indicator)
     }
 }

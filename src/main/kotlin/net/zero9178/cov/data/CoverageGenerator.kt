@@ -2,6 +2,7 @@ package net.zero9178.cov.data
 
 import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
@@ -13,6 +14,7 @@ interface CoverageGenerator {
     fun patchEnvironment(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
+        executionTarget: ExecutionTarget,
         cmdLine: GeneralCommandLine
     ) {
     }
@@ -20,7 +22,8 @@ interface CoverageGenerator {
     fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
+        executionTarget: ExecutionTarget,
+        indicator: ProgressIndicator
     ): CoverageData? {
         return null
     }

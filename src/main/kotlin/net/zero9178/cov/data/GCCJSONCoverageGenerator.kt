@@ -1,8 +1,6 @@
 package net.zero9178.cov.data
 
-import com.beust.klaxon.Json
 import com.beust.klaxon.JsonObject
-import com.beust.klaxon.Klaxon
 import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.ExecutionTarget
@@ -11,6 +9,8 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -33,6 +33,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
 class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
@@ -299,7 +300,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                                         steppedIn.count.toInt() to skipped.count.toInt()
                                     } else {
                                         if (current.first != 0) {
-                                            steppedIn.count.toInt() to current.second.toInt() + skipped.count.toInt()
+                                            steppedIn.count.toInt() to current.second + skipped.count.toInt()
                                         } else {
                                             current
                                         }
@@ -338,26 +339,26 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                         lastOCElement = element
                         val steppedIn = if (branches.first.fallthrough) branches.first else branches.second
                         val skipped = if (branches.first.fallthrough) branches.second else branches.first
-                        list + CoverageBranchData(
-                            {
-                                val startLine =
-                                    document.getLineNumber(
-                                        element.getBranchMarkOffset() ?: element.textOffset
-                                    ) + 1
-                                val startColumn =
-                                    (element.getBranchMarkOffset()
-                                        ?: element.textOffset) - document.getLineStartOffset(
-                                        startLine - 1
-                                    ) + 1
-                                startLine toCP startColumn
-                            }(), steppedIn.count.toInt(), skipped.count.toInt()
-                        )
+                        list + run {
+                            val startLine =
+                                document.getLineNumber(
+                                    element.getBranchMarkOffset() ?: element.textOffset
+                                ) + 1
+                            val startColumn =
+                                (element.getBranchMarkOffset()
+                                    ?: element.textOffset) - document.getLineStartOffset(
+                                    startLine - 1
+                                ) + 1
+                            CoverageBranchData(
+                                startLine toCP startColumn, steppedIn.count.toInt(), skipped.count.toInt()
+                            )
+                        }
                     }
                 } catch (e: ProcessCanceledException) {
                     throw e
                 } catch (e: Exception) {
                     log.warn(e)
-                    emptyList<CoverageBranchData>()
+                    emptyList()
                 }
             }
         }
@@ -371,7 +372,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             }.map {
                 it.path
             }.toHashSet()
-        } ?: emptySet<String>()
+        } ?: emptySet()
 
         val filesToProcess = if (CoverageGeneratorSettings.getInstance().calculateExternalSources)
             root.files
@@ -383,31 +384,42 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             )
         }
 
-        val files = filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
+        val files = try {
+            filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
 
-            CompletableFuture.supplyAsync {
-                it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
-                    val linesOfFunction = file.lines.groupBy { it.functionName }
-                    val functions = file.functions.map { function ->
-                        val lines = linesOfFunction[function.name] ?: emptyList()
-                        CoverageFunctionData(
-                            function.startLine.toInt(),
-                            function.endLine.toInt(),
-                            function.demangledName,
-                            FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
-                            if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
-                                findStatementsForBranches(
-                                    lines,
-                                    env.toLocalPath(file.file),
-                                    project
-                                ) else emptyList()
-                        )
-                    }.associateBy { it.functionName }
-                    CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
+                CompletableFuture.supplyAsync {
+                    it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
+                        val linesOfFunction = file.lines.groupBy { it.functionName }
+                        val functions = file.functions.map { function ->
+                            ProgressManager.checkCanceled()
+                            val lines = linesOfFunction[function.name] ?: emptyList()
+                            CoverageFunctionData(
+                                function.startLine.toInt(),
+                                function.endLine.toInt(),
+                                function.demangledName,
+                                FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
+                                if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
+                                    findStatementsForBranches(
+                                        lines,
+                                        env.toLocalPath(file.file),
+                                        project
+                                    ) else emptyList()
+                            )
+                        }.associateBy { it.functionName }
+                        CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
+                    }
                 }
-            }
 
-        }.flatMap { it.get() }.associateBy { it.filePath }
+            }.flatMap { it.join() }.associateBy { it.filePath }
+        } catch (e: CompletionException) {
+            val cause = e.cause
+            if (cause != null) {
+                throw cause
+            } else {
+                throw e
+            }
+        }
+        ProgressManager.checkCanceled()
 
         return CoverageData(
             files,
@@ -417,40 +429,27 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     }
 
     private data class Root(
-        @Json(name = "current_working_directory") val currentWorkingDirectory: String,
-        @Json(name = "data_file") val dataFile: String = "",
-        @Json(name = "gcc_version") val gccVersion: String,
-        @Json(name = "format_version") val formatVersion: String = "0",
+        val currentWorkingDirectory: String,
         val files: List<File>
     )
 
     private data class File(val file: String, val functions: List<Function>, val lines: List<Line>)
 
     private data class Function(
-        val blocks: Number,
-        @Json(name = "blocks_executed") val blocksExecuted: Number,
-        @Json(name = "demangled_name") val demangledName: String,
-        @Json(
-            name = "end_column"
-        ) val endColumn: Number,
-        @Json(name = "end_line") val endLine: Number,
-        @Json(name = "execution_count") val executionCount: Number,
+        val demangledName: String,
+        val endLine: Number,
         val name: String,
-        @Json(name = "start_column") val startColumn: Number,
-        @Json(name = "start_line") val startLine: Number
+        val startLine: Number
     )
 
     private data class Line(
         val branches: List<Branch>,
         val count: Number,
-        @Json(name = "line_number") val lineNumber: Number,
-        @Json(name = "unexecuted_block") val unexecutedBlock: Boolean,
-        @Json(
-            name = "function_name"
-        ) val functionName: String = ""
+        val lineNumber: Number,
+        val functionName: String
     )
 
-    private data class Branch(val count: Number, val fallthrough: Boolean, @Json(name = "throw") val throwing: Boolean)
+    private data class Branch(val count: Number, val fallthrough: Boolean, val throwing: Boolean)
 
     private fun processJson(
         jsonContents: List<String>,
@@ -458,35 +457,66 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         project: Project
     ): CoverageData {
 
-        val root = jsonContents.map {
-            CompletableFuture.supplyAsync {
-                val root = Klaxon().maybeParse<Root>(Parser.jackson().parse(StringReader(it)) as JsonObject)
-                    ?: return@supplyAsync emptyList()
-                val cwd = root.currentWorkingDirectory.replace(
-                    '\n',
-                    '\\'
-                )//For some reason gcov uses \n instead of \\ on Windows?!
-
-                root.files.map {
-                    File(
-                        if (Paths.get(env.toLocalPath(it.file)).isAbsolute) it.file else Paths.get(env.toLocalPath(cwd))
-                            .resolve(env.toLocalPath(it.file))
-                            .toRealPath(
-                                LinkOption.NOFOLLOW_LINKS
-                            ).toString().run {
-                                env.toEnvPath(this)
-                            },
-                        it.functions,
-                        it.lines
+        val jsonStart = System.nanoTime()
+        val files = jsonContents.flatMap { json ->
+            val jsonObject = Parser.jackson().parse(StringReader(json)) as JsonObject
+            val currentWorkingDirectory = jsonObject.string("current_working_directory")?.replace(
+                '\n',
+                '\\'
+            ) ?: return@flatMap emptyList() //For some reason gcov uses \n instead of \\ on Windows?!
+            val files = jsonObject.array<JsonObject>("files")?.mapNotNull fileMap@{
+                val file = it.string("file") ?: return@fileMap null
+                val functions = it.array<JsonObject>("functions")?.mapNotNull { function ->
+                    val demangledName = function.string("demangled_name") ?: return@mapNotNull null
+                    val endColumn = function["end_column"] as? Number ?: return@mapNotNull null
+                    val name = function.string("name") ?: return@mapNotNull null
+                    val startLine = function["start_line"] as? Number ?: return@mapNotNull null
+                    Function(
+                        demangledName,
+                        endColumn,
+                        name,
+                        startLine
                     )
-                }
+                } ?: return@fileMap null
+                val lines = it.array<JsonObject>("lines")?.mapNotNull { line ->
+                    val branches = line.array<JsonObject>("branches")?.mapNotNull branchMap@{ branch ->
+                        val count = branch["count"] as? Number ?: return@branchMap null
+                        val fallthrough = branch.boolean("fallthrough") ?: return@branchMap null
+                        val throwing = branch.boolean("throw") ?: return@branchMap null
+                        Branch(count, fallthrough, throwing)
+                    } ?: return@mapNotNull null
+                    val count = line["count"] as? Number ?: return@mapNotNull null
+                    val lineNumber = line["line_number"] as? Number ?: return@mapNotNull null
+                    val functionName = line.string("function_name") ?: ""
+                    Line(branches, count, lineNumber, functionName)
+                } ?: return@fileMap null
+                ProgressManager.checkCanceled()
+                File(file, functions, lines)
+            } ?: return@flatMap emptyList()
+            val root = Root(currentWorkingDirectory, files)
+
+            root.files.map { file ->
+                File(
+                    if (Paths.get(env.toLocalPath(file.file)).isAbsolute) file.file else Paths.get(
+                        env.toLocalPath(
+                            currentWorkingDirectory
+                        )
+                    )
+                        .resolve(env.toLocalPath(file.file))
+                        .toRealPath(
+                            LinkOption.NOFOLLOW_LINKS
+                        ).toString().run {
+                            env.toEnvPath(this)
+                        },
+                    file.functions,
+                    file.lines
+                )
             }
-        }.flatMap {
-            it.get()
         }
+        log.info("JSON processing took ${System.nanoTime() - jsonStart} ns")
 
         return rootToCoverageData(
-            Root(files = root, currentWorkingDirectory = "", gccVersion = ""),
+            Root(files = files, currentWorkingDirectory = ""),
             env,
             project
         )
@@ -495,7 +525,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget
+        executionTarget: ExecutionTarget,
+        indicator: ProgressIndicator
     ): CoverageData? {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
@@ -515,7 +546,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         } else {
             emptyList()
         } + files
-        val p = environment.hostMachine.runProcess(GeneralCommandLine(command), null, -1)
+        val p = environment.hostMachine.runProcess(GeneralCommandLine(command), indicator, -1)
+        indicator.checkCanceled()
         val lines = p.stdoutLines
         val retCode = p.exitCode
         if (retCode != 0) {

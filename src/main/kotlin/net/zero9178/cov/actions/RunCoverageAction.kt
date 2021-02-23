@@ -1,9 +1,10 @@
 package net.zero9178.cov.actions
 
-import com.intellij.execution.ProgramRunnerUtil
+import com.intellij.execution.ExecutionManager
 import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
+import com.intellij.ide.macro.MacroManager
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.Key
@@ -30,8 +31,7 @@ class CoverageButton : DumbAwareAction() {
             e.presentation.isEnabled = false
             return
         }
-        e.presentation.isEnabled = settings.type.id.startsWith("CMake")
-
+        e.presentation.isEnabled = CMakeAppRunConfiguration.getSelectedRunConfiguration(e.project) != null
         e.presentation.text = "Run '${settings.name}' with C/C++ Coverage Plugin"
     }
 
@@ -48,16 +48,16 @@ class CoverageButton : DumbAwareAction() {
         val config = settings.configuration as? CMakeAppRunConfiguration ?: return
         config.putUserData(STARTED_BY_COVERAGE_BUTTON, true)
 
+        MacroManager.getInstance().cacheMacrosPreview(anActionEvent.dataContext)
         val envBuilder = ExecutionEnvironmentBuilder.create(executor, settings)
 
         val environment = envBuilder.run {
-            contentToReuse(null)
-            dataContext(null)
+            dataContext(anActionEvent.dataContext)
             activeTarget()
-        }.build()
-
-        ProgramRunnerUtil.executeConfigurationAsync(environment, true, true) {
+        }.build {
             config.replace(STARTED_BY_COVERAGE_BUTTON, true, null)
         }
+
+        ExecutionManager.getInstance(config.project).restartRunProfile(environment)
     }
 }
