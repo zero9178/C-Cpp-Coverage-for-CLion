@@ -35,7 +35,7 @@ private fun extractVersion(line: String): Triple<Int, Int, Int> {
     return Triple(first.toInt(), second.toInt(), value.toInt())
 }
 
-fun getGeneratorFor(
+fun createGeneratorFor(
     executable: String,
     maybeOptionalLLVMProf: String?,
     optionalDemangler: String?,
