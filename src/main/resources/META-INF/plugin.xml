@@ -52,6 +52,7 @@ For further details, known issues and differences of compilers see <a href="http
 
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="net.zero9178.cov.editor.CoverageHighlighter"/>
+        <projectService serviceImplementation="net.zero9178.cov.ProjectSemaphore"/>
         <projectService serviceImplementation="net.zero9178.cov.window.CoverageViewImpl"
                         serviceInterface="net.zero9178.cov.window.CoverageView"/>
         <applicationService serviceImplementation="net.zero9178.cov.settings.CoverageGeneratorSettings"/>
@@ -61,6 +62,7 @@ For further details, known issues and differences of compilers see <a href="http
         <toolWindow id="C/C++ Coverage" anchor="right" factoryClass="net.zero9178.cov.window.CoverageWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowCoverage"/>
         <notificationGroup displayType="BALLOON" id="C/C++ Coverage Notification"/>
+        <writingAccessProvider implementation="net.zero9178.cov.editor.CoverageFileAccessProtector"/>
         <!-- Add your extensions here -->
     </extensions>
 
