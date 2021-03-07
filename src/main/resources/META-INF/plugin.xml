@@ -63,6 +63,8 @@ For further details, known issues and differences of compilers see <a href="http
                     icon="AllIcons.Toolwindows.ToolWindowCoverage"/>
         <notificationGroup displayType="BALLOON" id="C/C++ Coverage Notification"/>
         <writingAccessProvider implementation="net.zero9178.cov.editor.CoverageFileAccessProtector"/>
+        <codeInsight.lineMarkerProvider
+                implementationClass="net.zero9178.cov.editor.CoverageTemplateLineMarkerProvider" language="ObjectiveC"/>
         <!-- Add your extensions here -->
     </extensions>
 

@@ -394,8 +394,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
                             ProgressManager.checkCanceled()
                             val lines = linesOfFunction[function.name] ?: emptyList()
                             CoverageFunctionData(
-                                function.startLine.toInt(),
-                                function.endLine.toInt(),
+                                function.startLine.toInt() toCP 0,
+                                function.endLine.toInt() toCP 0,
                                 function.demangledName,
                                 FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
                                 if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)

@@ -281,8 +281,8 @@ class LLVMCoverageGenerator(
         }
 
         result + CoverageFunctionData(
-            regions.first().start.first,
-            regions.first().end.first,
+            regions.first().start,
+            regions.first().end,
             demangledNames[function.name] ?: function.name,
             FunctionRegionData(functionRegions),
             if (CoverageGeneratorSettings.getInstance()

@@ -31,8 +31,8 @@ class FunctionRegionData(override val data: List<Region>) : FunctionCoverageData
 }
 
 data class CoverageFunctionData(
-    val startLine: Int,
-    val endLine: Int,
+    val startPos: ComparablePair<Int, Int>,
+    val endPos: ComparablePair<Int, Int>,
     val functionName: String,
     val coverage: FunctionCoverageData,
     val branches: List<CoverageBranchData>
