@@ -103,7 +103,7 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
             ranges += markupModel.addRangeHighlighter(
                 editor.logicalPositionToOffset(start),
                 editor.logicalPositionToOffset(end),
-                HighlighterLayer.SYNTAX - 1,
+                HighlighterLayer.CARET_ROW + 1,
                 TextAttributes(null, colour, null, EffectType.SEARCH_MATCH, Font.PLAIN),
                 HighlighterTargetArea.EXACT_RANGE
             )
