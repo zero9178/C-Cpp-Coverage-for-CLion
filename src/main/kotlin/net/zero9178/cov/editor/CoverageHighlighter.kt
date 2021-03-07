@@ -3,9 +3,12 @@ package net.zero9178.cov.editor
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.*
 import com.intellij.openapi.editor.colors.CodeInsightColors
+import com.intellij.openapi.editor.colors.EditorColorsListener
+import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
@@ -51,6 +54,11 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
                 removeFromEditor(editor)
             }
         }, this)
+        ApplicationManager.getApplication().messageBus.connect(this)
+            .subscribe(EditorColorsManager.TOPIC, EditorColorsListener {
+                clear()
+                EditorFactory.getInstance().allEditors.forEach(::applyOnEditor)
+            })
     }
 
     private class MyEditorCustomElementRenderer(val editor: Editor, val fullCoverage: Boolean) :
