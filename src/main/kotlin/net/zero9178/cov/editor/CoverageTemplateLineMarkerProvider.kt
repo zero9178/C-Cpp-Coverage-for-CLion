@@ -29,7 +29,7 @@ import java.awt.event.HierarchyBoundsAdapter
 import java.awt.event.HierarchyEvent
 import kotlin.math.min
 
-private const val MAX_COMBO_BOX_WIDTH = 400
+private const val MAX_COMBO_BOX_WIDTH = 200
 
 class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
 
@@ -66,9 +66,9 @@ class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
         } ?: return null
 
         return object : LineMarkerInfo<PsiElement>(attach, attach.textRange, CPPCoverageIcons.TEMPLATE_LINE_MARKER, {
-            "Change displayed template type"
+            "Change displayed template instantiation coverage"
         }, null, GutterIconRenderer.Alignment.RIGHT, {
-            "Change displayed template type"
+            "Change displayed template instantiation coverage"
         }) {
             override fun createGutterRenderer(): GutterIconRenderer {
                 return object : LineMarkerGutterIconRenderer<PsiElement>(this) {
@@ -100,15 +100,17 @@ class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
             }
             val comboBox = ComboBox(group.functions.keys.toTypedArray())
             val maxLength = group.functions.keys.maxOf { it.length }
-            comboBox.prototypeDisplayValue = "".padStart(min(maxLength, MAX_COMBO_BOX_WIDTH))
-            comboBox.setMinLength(100)
+            comboBox.prototypeDisplayValue = "".padStart(min(maxLength, MAX_COMBO_BOX_WIDTH), '0')
             comboBox.addActionListener {
                 if (Disposer.isDisposed(group)) {
                     return@addActionListener
                 }
                 highlighter.changeActive(editor, group, comboBox.item)
             }
-            val balloon = JBPopupFactory.getInstance().createDialogBalloonBuilder(comboBox, null).apply {
+            val balloon = JBPopupFactory.getInstance().createDialogBalloonBuilder(
+                comboBox,
+                null
+            ).apply {
                 setHideOnClickOutside(true)
                 setCloseButtonEnabled(false)
                 setAnimationCycle(0)
