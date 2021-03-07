@@ -79,48 +79,56 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
         }
     }
 
-    private fun applyOnEditor(editor: Editor) {
-        val markupModel = editor.markupModel
+    private fun applyOnHighlightFunction(editor: Editor, functionGroup: HighlightFunctionGroup) {
+        val rangesInFunction = myActiveHighlighting.getOrPut(editor) { mutableMapOf() }
+        val ranges = rangesInFunction.getOrPut(functionGroup) { mutableListOf() }
+        val value = functionGroup.functions[functionGroup.active] ?: return
         val colorScheme = EditorColorsUtil.getGlobalOrDefaultColorScheme()
+        val markupModel = editor.markupModel as? MarkupModelEx ?: return
+        for ((start, end, covered) in value.highlighted) {
+            val colour =
+                colorScheme.getAttributes(
+                    if (covered)
+                        CodeInsightColors.LINE_FULL_COVERAGE
+                    else CodeInsightColors.LINE_NONE_COVERAGE
+                ).foregroundColor
+            ranges += markupModel.addRangeHighlighter(
+                editor.logicalPositionToOffset(start),
+                editor.logicalPositionToOffset(end),
+                HighlighterLayer.SYNTAX - 1,
+                TextAttributes(null, colour, null, EffectType.SEARCH_MATCH, Font.PLAIN),
+                HighlighterTargetArea.EXACT_RANGE
+            )
+        }
+
+        myActiveInlays.getOrPut(editor) { mutableMapOf() }.getOrPut(
+            functionGroup
+        ) { mutableListOf() } += value.branchInfo.map { (startPos, steppedIn, skipped) ->
+            editor.inlayModel.addInlineElement(
+                editor.logicalPositionToOffset(startPos),
+                MyEditorCustomElementRenderer(editor, steppedIn && skipped)
+            )
+        }
+    }
+
+    private fun applyOnEditor(editor: Editor) {
         val vs = FileDocumentManager.getInstance().getFile(editor.document) ?: return
         val info = myHighlighting[vs] ?: return
-        val ranges = myActiveHighlighting.getOrPut(editor) { mutableListOf() }
-        info.values.forEach {
-            val value = it.functions[it.active] ?: return@forEach
-            for ((start, end, covered) in value.highlighted) {
-                val colour =
-                    colorScheme.getAttributes(
-                        if (covered)
-                            CodeInsightColors.LINE_FULL_COVERAGE
-                        else CodeInsightColors.LINE_NONE_COVERAGE
-                    ).foregroundColor
-                ranges += markupModel.addRangeHighlighter(
-                    editor.logicalPositionToOffset(start),
-                    editor.logicalPositionToOffset(end),
-                    HighlighterLayer.SELECTION - 1,
-                    TextAttributes(null, colour, null, EffectType.SEARCH_MATCH, Font.PLAIN),
-                    HighlighterTargetArea.EXACT_RANGE
-                )
-            }
 
-            myActiveInlays.getOrPut(editor) { mutableListOf() } += value.branchInfo.map { (startPos, steppedIn, skipped) ->
-                editor.inlayModel.addInlineElement(
-                    editor.logicalPositionToOffset(startPos),
-                    MyEditorCustomElementRenderer(editor, steppedIn && skipped)
-                )
-            }
+        info.values.forEach {
+            applyOnHighlightFunction(editor, it)
         }
     }
 
     private fun removeFromEditor(editor: Editor) {
         myActiveInlays.remove(editor)?.apply {
-            this.filterNotNull().forEach {
+            this.values.flatten().filterNotNull().forEach {
                 Disposer.dispose(it)
             }
         }
         val markupModel = editor.markupModel as? MarkupModelEx ?: return
         myActiveHighlighting.remove(editor)?.apply {
-            this.filter {
+            this.values.flatten().filter {
                 markupModel.containsHighlighter(it)
             }.forEach {
                 markupModel.removeHighlighter(it)
@@ -129,6 +137,7 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
     }
 
     data class HighlightFunctionGroup(
+        val region: FunctionRegion,
         val functions: Map<String, HighlightFunction>,
         var active: String
     ) : Disposable {
@@ -140,20 +149,42 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
         val branchInfo: List<Triple<LogicalPosition, Boolean, Boolean>>
     )
 
-    private val myActiveInlays: MutableMap<Editor, MutableList<Inlay<*>?>> = mutableMapOf()
-    private val myActiveHighlighting: MutableMap<Editor, MutableList<RangeHighlighter>> = mutableMapOf()
+    private val myActiveInlays: MutableMap<Editor, MutableMap<HighlightFunctionGroup, MutableList<Inlay<*>?>>> =
+        mutableMapOf()
+    private val myActiveHighlighting: MutableMap<Editor, MutableMap<HighlightFunctionGroup, MutableList<RangeHighlighter>>> =
+        mutableMapOf()
 
     private var myHighlighting: Map<VirtualFile, Map<ComparablePair<Int, Int>, HighlightFunctionGroup>> = mapOf()
 
     val highlighting
         get() = myHighlighting
 
-    fun changeActive(group: HighlightFunctionGroup, active: String) {
-        // For now terribly inefficient by redrawing everything.
+    fun changeActive(editor: Editor, group: HighlightFunctionGroup, active: String) {
         assert(group.functions.contains(active))
-        group.active = active
-        clear()
-        EditorFactory.getInstance().allEditors.forEach(::applyOnEditor)
+        fun changeActiveImpl(editor: Editor, group: HighlightFunctionGroup, active: String?) {
+            myActiveInlays[editor]?.remove(group)?.filterNotNull()?.forEach {
+                Disposer.dispose(it)
+            }
+            val markupModel = editor.markupModel as? MarkupModelEx ?: return
+            myActiveHighlighting[editor]?.remove(group)?.filter {
+                markupModel.containsHighlighter(it)
+            }?.forEach {
+                markupModel.removeHighlighter(it)
+            }
+            if (active != null) {
+                group.active = active
+            }
+            applyOnHighlightFunction(editor, group)
+            if (active != null) {
+                val vs = FileDocumentManager.getInstance().getFile(editor.document) ?: return
+                myHighlighting[vs]?.values?.filter {
+                    group.region.first < it.region.first && group.region.second > it.region.second
+                }?.forEach {
+                    changeActiveImpl(editor, it, null)
+                }
+            }
+        }
+        changeActiveImpl(editor, group, active)
     }
 
     fun setCoverageData(coverageData: CoverageData?) {
@@ -198,7 +229,7 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
                     }
                     functionData.functionName to HighlightFunction(highlighting, branches)
                 }
-                entry.key.first to HighlightFunctionGroup(functions, functions.first().key)
+                entry.key.first to HighlightFunctionGroup(entry.key, functions, functions.first().key)
             }.toMap()
         }.mapNotNull {
             try {
