@@ -15,6 +15,7 @@ import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import net.zero9178.cov.settings.CoverageGeneratorSettings
+import net.zero9178.cov.util.toCP
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
@@ -193,7 +194,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             }
             files += CoverageFileData(file.path, functions.map { (startLine, name, lines) ->
                 CoverageFunctionData(
-                    startLine, Int.MAX_VALUE, name, FunctionLineData(lines),
+                    startLine toCP 0, Int.MAX_VALUE toCP 0, name, FunctionLineData(lines),
                     emptyList()
                 )
             }.associateBy { it.functionName })
