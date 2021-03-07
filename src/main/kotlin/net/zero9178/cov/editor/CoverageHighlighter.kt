@@ -131,7 +131,9 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
     data class HighlightFunctionGroup(
         val functions: Map<String, HighlightFunction>,
         var active: String
-    )
+    ) : Disposable {
+        override fun dispose() {}
+    }
 
     data class HighlightFunction(
         val highlighted: List<Region>,
@@ -155,9 +157,15 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
     }
 
     fun setCoverageData(coverageData: CoverageData?) {
+        myHighlighting.values.forEach {
+            it.values.forEach { functionGroup ->
+                Disposer.dispose(functionGroup)
+            }
+        }
         myHighlighting = mapOf()
         clear()
         if (coverageData == null) {
+            DaemonCodeAnalyzer.getInstance(myProject).restart()
             return
         }
         myHighlighting = coverageData.files.mapValues { (_, file) ->
