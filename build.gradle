@@ -31,7 +31,7 @@ intellij {
     type 'CL'
 }
 runIde {
-    jvmArgs '-Xmx2G'
+    jvmArgs '-Xmx4G'
 }
 compileKotlin {
     kotlinOptions.jvmTarget = "1.8"
