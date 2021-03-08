@@ -5,7 +5,10 @@ import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ModuleRootManager
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.ui.SpeedSearchComparator
 import com.intellij.ui.TreeTableSpeedSearch
@@ -15,6 +18,7 @@ import com.intellij.ui.treeStructure.treetable.TreeColumnInfo
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.tree.TreeUtil
+import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import net.zero9178.cov.data.CoverageFileData
 import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.FunctionLineData
@@ -31,6 +35,7 @@ import javax.swing.*
 import javax.swing.table.TableCellRenderer
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreeNode
 
 class CoverageViewImpl(val project: Project) : CoverageView() {
 
@@ -215,7 +220,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         var count = 0
                         for (i in 0 until parent.childCount) {
                             val child = parent.getChildAt(i)
-                            if (!Paths.get(child.toString()).isAbsolute) {
+                            if (isProjectSource(child)) {
                                 count++
                             }
                         }
@@ -230,7 +235,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         var count = 0
                         for (i in 0 until parent.childCount) {
                             val child = parent.getChildAt(i)
-                            if (!Paths.get(child.toString()).isAbsolute) {
+                            if (isProjectSource(child)) {
                                 if (count == index) {
                                     return child
                                 }
@@ -239,6 +244,23 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         }
                         return super.getChild(parent, index)
                     }
+                }
+
+                private fun isProjectSource(child: TreeNode): Boolean {
+                    if (child !is DefaultMutableTreeNode) {
+                        return true
+                    }
+                    val coverageFileData = child.userObject as? CoverageFileData ?: return true
+                    val vs = LocalFileSystem.getInstance().findFileByNioFile(Paths.get(coverageFileData.filePath))
+                        ?: return true
+                    val projectSources = CMakeWorkspace.getInstance(project).module?.let { module ->
+                        ModuleRootManager.getInstance(module).contentEntries.map {
+                            it.sourceFolderFiles.toSet()
+                        }.fold(emptySet()) { result, curr ->
+                            result.union(curr)
+                        }
+                    } ?: emptySet<VirtualFile>()
+                    return projectSources.contains(vs)
                 }
             }
         )
@@ -398,7 +420,7 @@ private fun getCurrentLineCoverage(functionOrFileData: Any): Long {
     return when (functionOrFileData) {
         is CoverageFunctionData -> fromFunctionData(functionOrFileData)
         is CoverageFileData -> {
-            functionOrFileData.functions.values.map(::fromFunctionData).sum()
+            functionOrFileData.functions.values.sumOf(::fromFunctionData)
         }
         else -> 0
     }
@@ -416,7 +438,7 @@ private fun getMaxLineCoverage(functionOrFileData: Any): Long {
     return when (functionOrFileData) {
         is CoverageFunctionData -> fromFunctionData(functionOrFileData)
         is CoverageFileData -> {
-            functionOrFileData.functions.values.map(::fromFunctionData).sum()
+            functionOrFileData.functions.values.sumOf(::fromFunctionData)
         }
         else -> 0L
     }
