@@ -215,7 +215,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
                                 }
                                 if (data != null) {
-                                    createCoverageViewTree(root, data, project)
+                                    createCoverageViewTree(root, data)
                                 }
                                 invokeLater {
                                     CoverageView.getInstance(configuration.project)
@@ -329,7 +329,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         ) == true
     }
 
-    private fun createCoverageViewTree(root: DefaultMutableTreeNode, data: CoverageData, project: Project) {
+    private fun createCoverageViewTree(root: DefaultMutableTreeNode, data: CoverageData) {
 
         data class ChosenName(val filepath: String, var count: Int, val data: CoverageFileData) {
             fun getFilename(): String {
