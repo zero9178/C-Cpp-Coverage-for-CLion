@@ -47,7 +47,6 @@ import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.window.CoverageView
 import java.io.File
-import java.nio.file.Paths
 import javax.swing.event.HyperlinkEvent
 import javax.swing.tree.DefaultMutableTreeNode
 
@@ -216,32 +215,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
                                 }
                                 if (data != null) {
-                                    for ((_, value) in data.files) {
-                                        val fileNode = object : DefaultMutableTreeNode(value) {
-                                            override fun toString(): String {
-                                                val filePath =
-                                                    (userObject as? CoverageFileData)?.filePath?.replace('\\', '/')
-                                                filePath ?: return userObject.toString()
-                                                val projectPath =
-                                                    configuration.project.basePath?.replace('\\', '/')
-                                                projectPath ?: return filePath
-                                                return if (filePath.startsWith(projectPath)) {
-                                                    Paths.get(projectPath).relativize(Paths.get(filePath)).toString()
-                                                } else {
-                                                    filePath
-                                                }
-                                            }
-                                        }
-
-                                        root.add(fileNode)
-                                        for (function in value.functions.values) {
-                                            fileNode.add(object : DefaultMutableTreeNode(function) {
-                                                override fun toString() =
-                                                    (userObject as? CoverageFunctionData)?.functionName
-                                                        ?: userObject.toString()
-                                            })
-                                        }
-                                    }
+                                    createCoverageViewTree(root, data, project)
                                 }
                                 invokeLater {
                                     CoverageView.getInstance(configuration.project)
@@ -353,5 +327,55 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         return CoverageGeneratorSettings.getInstance().useCoverageAction && configuration.getUserData(
             STARTED_BY_COVERAGE_BUTTON
         ) == true
+    }
+
+    private fun createCoverageViewTree(root: DefaultMutableTreeNode, data: CoverageData, project: Project) {
+
+        data class ChosenName(val filepath: String, var count: Int, val data: CoverageFileData) {
+            fun getFilename(): String {
+                return filepath.split('/').takeLast(count).joinToString("/")
+            }
+        }
+
+        val map = mutableMapOf<String, ChosenName>()
+        for ((_, value) in data.files) {
+            var new = ChosenName(value.filePath.replace('\\', '/'), 1, value)
+            val filename = new.getFilename()
+            val existing = map[filename]
+            if (existing == null) {
+                map[filename] = new
+                continue
+            }
+            map.remove(filename)
+            var nonNull: ChosenName = existing
+            while (new.getFilename() == nonNull.getFilename()) {
+                new = new.copy(count = new.count + 1)
+                nonNull = nonNull.copy(count = nonNull.count + 1)
+            }
+            map[new.getFilename()] = new
+            map[nonNull.getFilename()] = nonNull
+        }
+
+        val fileDataToName = map.map {
+            it.value.data to it.key
+        }.toMap()
+
+        for ((_, value) in data.files) {
+            val fileNode = object : DefaultMutableTreeNode(value) {
+                override fun toString(): String {
+                    val coverageFileData = userObject as? CoverageFileData ?: return super.toString()
+                    return fileDataToName[coverageFileData] ?: return super.toString()
+                }
+            }
+
+            root.add(fileNode)
+            for (function in value.functions.values) {
+                fileNode.add(object : DefaultMutableTreeNode(function) {
+                    override fun toString() =
+                        (userObject as? CoverageFunctionData)?.functionName
+                            ?: userObject.toString()
+                })
+            }
+        }
     }
 }
