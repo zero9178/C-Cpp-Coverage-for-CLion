@@ -105,7 +105,7 @@ class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
                 if (Disposer.isDisposed(group)) {
                     return@addActionListener
                 }
-                highlighter.changeActive(editor, group, comboBox.item)
+                highlighter.changeActive(group, comboBox.item)
             }
             val balloon = JBPopupFactory.getInstance().createDialogBalloonBuilder(
                 comboBox,

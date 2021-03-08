@@ -98,6 +98,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
     override fun createUIComponents() {
         myTreeTableView =
             TreeTableView(ListTreeTableModelOnColumns(DefaultMutableTreeNode("empty-root"), getColumnInfo(true)))
+        myTreeTableView.rowSelectionAllowed = true
         myTreeTableView.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
                 e ?: return
@@ -264,6 +265,30 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                 }
             }
         )
+        fun doFunctionSelection(item: DefaultMutableTreeNode) {
+            val coverageFunctionData = item.userObject as? CoverageFunctionData ?: return
+            val fileData = (item.parent as? DefaultMutableTreeNode)?.userObject as? CoverageFileData
+                ?: return
+            val vs = LocalFileSystem.getInstance().findFileByNioFile(Paths.get(fileData.filePath))
+                ?: return
+            val highlighter = CoverageHighlighter.getInstance(project)
+            val file = highlighter.highlighting[vs] ?: return
+            val group = file[coverageFunctionData.startPos] ?: return
+            if (group.functions.size <= 1) {
+                return
+            }
+            highlighter.changeActive(group, coverageFunctionData.functionName)
+        }
+
+        myTreeTableView.selectionModel.addListSelectionListener {
+            if (myTreeTableView.selectedRowCount != 1) {
+                return@addListSelectionListener
+            }
+            val item =
+                myTreeTableView.model.getValueAt(myTreeTableView.selectedRow, 0) as? DefaultMutableTreeNode
+                    ?: return@addListSelectionListener
+            doFunctionSelection(item)
+        }
         TreeUtil.treeNodeTraverser(treeNode).forEach { node ->
             if (node !is DefaultMutableTreeNode) return@forEach
             val file = node.userObject as? CoverageFileData ?: return@forEach
