@@ -11,6 +11,7 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.impl.source.tree.LeafPsiElement
@@ -31,10 +32,12 @@ import kotlin.math.min
 
 private const val MAX_COMBO_BOX_WIDTH = 200
 
+val DUPLICATE_FUNCTION_GROUP = Key<MutableSet<CoverageHighlighter.HighlightFunctionGroup>>("DUPLICATE_FUNCTION_GROUP")
+
 class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
 
     override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? {
-        if (element !is LeafPsiElement || element.elementType !== OCTokenTypes.LBRACE) {
+        if (element !is LeafPsiElement || (element.elementType !== OCTokenTypes.LBRACE && element.elementType !== OCTokenTypes.IDENTIFIER)) {
             return null
         }
         val project = element.project
@@ -45,8 +48,25 @@ class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
         val info = highlighter.highlighting[file] ?: return null
         val line = document.getLineNumber(element.startOffset)
         val column = element.startOffset - document.getLineStartOffset(line)
-        val region = (line + 1) toCP (column + 1)
-        val group = info[region] ?: return null
+        var region = (line + 1) toCP (column + 1)
+        var group = info[region]
+        if (group == null) {
+            // GCC does not carry any information about the column, just the line. Retry by searching for the line and column 0
+            region = (line + 1) toCP 0
+            group = info[region] ?: return null
+            // If there are multiple lambdas, function definitions or whatever on a line we can't differentiate them
+            // as GCC only gives line info so we need to make sure ourselves that we don't create multiple line
+            // markers for the same group
+            val duplicates = project.getUserData(DUPLICATE_FUNCTION_GROUP)
+            if (duplicates != null) {
+                if (duplicates.contains(group)) {
+                    return null
+                }
+                duplicates.add(group)
+            } else {
+                project.putUserData(DUPLICATE_FUNCTION_GROUP, mutableSetOf(group))
+            }
+        }
         if (group.functions.size <= 1) {
             return null
         }
