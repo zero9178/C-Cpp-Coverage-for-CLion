@@ -43,7 +43,7 @@ import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
 class LLVMCoverageGenerator(
-    private val myMajorVersion: Int,
+    val majorVersion: Int,
     private val myLLVMCov: String,
     private val myLLVMProf: String,
     private val myDemangler: String?
@@ -202,7 +202,7 @@ class LLVMCoverageGenerator(
                     emptyList()
                 )
 
-                val functionsMap = if (myMajorVersion >= 12 || !CoverageGeneratorSettings.getInstance()
+                val functionsMap = if (majorVersion >= 12 || !CoverageGeneratorSettings.getInstance()
                         .branchCoverageEnabled
                 ) {
                     processFunctions(environment, project, demangledNames, file, llvmFunctions)
@@ -281,8 +281,8 @@ class LLVMCoverageGenerator(
         }
 
         result + CoverageFunctionData(
-            regions.first().start.first,
-            regions.first().end.first,
+            regions.first().start,
+            regions.first().end,
             demangledNames[function.name] ?: function.name,
             FunctionRegionData(functionRegions),
             if (CoverageGeneratorSettings.getInstance()

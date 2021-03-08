@@ -9,7 +9,7 @@ import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.toolchains.*
 import com.jetbrains.cidr.toolchains.OSType
 import net.zero9178.cov.data.CoverageGenerator
-import net.zero9178.cov.data.getGeneratorFor
+import net.zero9178.cov.data.createGeneratorFor
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -133,7 +133,7 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
     }
 
     private fun generateGeneratorFor(name: String, info: GeneratorInfo) {
-        myGenerators[name] = getGeneratorFor(
+        myGenerators[name] = createGeneratorFor(
             info.gcovOrllvmCovPath,
             info.llvmProfDataPath,
             info.demangler,

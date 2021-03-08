@@ -5,7 +5,10 @@ import com.intellij.openapi.editor.colors.EditorColorsUtil
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ModuleRootManager
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.ui.SpeedSearchComparator
 import com.intellij.ui.TreeTableSpeedSearch
@@ -15,6 +18,7 @@ import com.intellij.ui.treeStructure.treetable.TreeColumnInfo
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.tree.TreeUtil
+import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import net.zero9178.cov.data.CoverageFileData
 import net.zero9178.cov.data.CoverageFunctionData
 import net.zero9178.cov.data.FunctionLineData
@@ -31,6 +35,7 @@ import javax.swing.*
 import javax.swing.table.TableCellRenderer
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreeNode
 
 class CoverageViewImpl(val project: Project) : CoverageView() {
 
@@ -93,6 +98,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
     override fun createUIComponents() {
         myTreeTableView =
             TreeTableView(ListTreeTableModelOnColumns(DefaultMutableTreeNode("empty-root"), getColumnInfo(true)))
+        myTreeTableView.rowSelectionAllowed = true
         myTreeTableView.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
                 e ?: return
@@ -118,7 +124,14 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         val file = VfsUtil.findFileByIoFile(Paths.get(fileData.filePath).toFile(), true) ?: return
 
                         FileEditorManager.getInstance(project)
-                            .openEditor(OpenFileDescriptor(project, file, data.startLine - 1, 0), true)
+                            .openEditor(
+                                OpenFileDescriptor(
+                                    project,
+                                    file,
+                                    data.startPos.first - 1,
+                                    data.startPos.second
+                                ), true
+                            )
                     }
                 }
             }
@@ -208,7 +221,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         var count = 0
                         for (i in 0 until parent.childCount) {
                             val child = parent.getChildAt(i)
-                            if (!Paths.get(child.toString()).isAbsolute) {
+                            if (isProjectSource(child)) {
                                 count++
                             }
                         }
@@ -223,7 +236,7 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         var count = 0
                         for (i in 0 until parent.childCount) {
                             val child = parent.getChildAt(i)
-                            if (!Paths.get(child.toString()).isAbsolute) {
+                            if (isProjectSource(child)) {
                                 if (count == index) {
                                     return child
                                 }
@@ -233,8 +246,49 @@ class CoverageViewImpl(val project: Project) : CoverageView() {
                         return super.getChild(parent, index)
                     }
                 }
+
+                private fun isProjectSource(child: TreeNode): Boolean {
+                    if (child !is DefaultMutableTreeNode) {
+                        return true
+                    }
+                    val coverageFileData = child.userObject as? CoverageFileData ?: return true
+                    val vs = LocalFileSystem.getInstance().findFileByNioFile(Paths.get(coverageFileData.filePath))
+                        ?: return true
+                    val projectSources = CMakeWorkspace.getInstance(project).module?.let { module ->
+                        ModuleRootManager.getInstance(module).contentEntries.map {
+                            it.sourceFolderFiles.toSet()
+                        }.fold(emptySet()) { result, curr ->
+                            result.union(curr)
+                        }
+                    } ?: emptySet<VirtualFile>()
+                    return projectSources.contains(vs)
+                }
             }
         )
+        fun doFunctionSelection(item: DefaultMutableTreeNode) {
+            val coverageFunctionData = item.userObject as? CoverageFunctionData ?: return
+            val fileData = (item.parent as? DefaultMutableTreeNode)?.userObject as? CoverageFileData
+                ?: return
+            val vs = LocalFileSystem.getInstance().findFileByNioFile(Paths.get(fileData.filePath))
+                ?: return
+            val highlighter = CoverageHighlighter.getInstance(project)
+            val file = highlighter.highlighting[vs] ?: return
+            val group = file[coverageFunctionData.startPos] ?: return
+            if (group.functions.size <= 1) {
+                return
+            }
+            highlighter.changeActive(group, coverageFunctionData.functionName)
+        }
+
+        myTreeTableView.selectionModel.addListSelectionListener {
+            if (myTreeTableView.selectedRowCount != 1) {
+                return@addListSelectionListener
+            }
+            val item =
+                myTreeTableView.model.getValueAt(myTreeTableView.selectedRow, 0) as? DefaultMutableTreeNode
+                    ?: return@addListSelectionListener
+            doFunctionSelection(item)
+        }
         TreeUtil.treeNodeTraverser(treeNode).forEach { node ->
             if (node !is DefaultMutableTreeNode) return@forEach
             val file = node.userObject as? CoverageFileData ?: return@forEach
@@ -383,14 +437,15 @@ private fun getCurrentLineCoverage(functionOrFileData: Any): Long {
     fun fromFunctionData(it: CoverageFunctionData): Long {
         return when (it.coverage) {
             is FunctionLineData -> it.coverage.data.count { entry -> entry.value > 0 }.toLong()
-            is FunctionRegionData -> it.coverage.data.filter { region -> region.kind != FunctionRegionData.Region.Kind.Gap }.count { region -> region.executionCount > 0 }.toLong()
+            is FunctionRegionData -> it.coverage.data.filter { region -> region.kind != FunctionRegionData.Region.Kind.Gap }
+                .count { region -> region.executionCount > 0 }.toLong()
         }
     }
 
     return when (functionOrFileData) {
         is CoverageFunctionData -> fromFunctionData(functionOrFileData)
         is CoverageFileData -> {
-            functionOrFileData.functions.values.map(::fromFunctionData).sum()
+            functionOrFileData.functions.values.sumOf(::fromFunctionData)
         }
         else -> 0
     }
@@ -400,14 +455,15 @@ private fun getMaxLineCoverage(functionOrFileData: Any): Long {
     fun fromFunctionData(it: CoverageFunctionData): Long {
         return when (it.coverage) {
             is FunctionLineData -> it.coverage.data.size.toLong()
-            is FunctionRegionData -> it.coverage.data.count { region -> region.kind != FunctionRegionData.Region.Kind.Gap }.toLong()
+            is FunctionRegionData -> it.coverage.data.count { region -> region.kind != FunctionRegionData.Region.Kind.Gap }
+                .toLong()
         }
     }
 
     return when (functionOrFileData) {
         is CoverageFunctionData -> fromFunctionData(functionOrFileData)
         is CoverageFileData -> {
-            functionOrFileData.functions.values.map(::fromFunctionData).sum()
+            functionOrFileData.functions.values.sumOf(::fromFunctionData)
         }
         else -> 0L
     }

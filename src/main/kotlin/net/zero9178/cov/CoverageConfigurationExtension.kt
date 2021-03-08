@@ -11,15 +11,18 @@ import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.application.invokeAndWaitIfNeeded
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.progress.PerformInBackgroundOption
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.UserDataHolder
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.cmake.model.CMakeConfiguration
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
@@ -37,15 +40,13 @@ import com.jetbrains.cidr.execution.coverage.CidrCoverageProgramRunner
 import com.jetbrains.cidr.lang.CLanguageKind
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
 import net.zero9178.cov.actions.STARTED_BY_COVERAGE_BUTTON
-import net.zero9178.cov.data.CoverageFileData
-import net.zero9178.cov.data.CoverageFunctionData
-import net.zero9178.cov.data.CoverageGenerator
+import net.zero9178.cov.data.*
+import net.zero9178.cov.editor.CoverageFileAccessProtector
 import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.window.CoverageView
 import java.io.File
-import java.nio.file.Paths
 import javax.swing.event.HyperlinkEvent
 import javax.swing.tree.DefaultMutableTreeNode
 
@@ -75,8 +76,11 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         if (explicitlyRequested(applicableConfiguration)) {
             return true
         }
+        val executionTarget =
+            ExecutionTargetManager.getActiveTarget(applicableConfiguration.project) as? CMakeBuildProfileExecutionTarget
+                ?: return false
         return (applicableConfiguration as? CMakeAppRunConfiguration)?.let {
-            hasCompilerFlags(it, ExecutionTargetManager.getActiveTarget(applicableConfiguration.project))
+            hasCompilerFlags(it, executionTarget)
         } ?: false
     }
 
@@ -131,7 +135,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        val executionTarget = context.getUserData(EXECUTION_TARGET_USED)
+        val executionTarget = context.getUserData(EXECUTION_TARGET_USED) as? CMakeBuildProfileExecutionTarget
         if (executionTarget == null || environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
                 runnerId
             ) is CidrCoverageProgramRunner
@@ -176,8 +180,31 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                         ) {
                             override fun run(indicator: ProgressIndicator) {
                                 indicator.isIndeterminate = true
+
+                                if (!ProjectSemaphore.getInstance(project).semaphore.tryAcquire()) {
+                                    indicator.text = "Waiting for other coverage gathering to finish"
+                                    ProjectSemaphore.getInstance(project).semaphore.acquire()
+                                    indicator.text = ""
+                                }
+
+                                val coverageGenerator = getCoverageGenerator(environment, configuration.project)
+                                val needsSourcefiles = when (coverageGenerator) {
+                                    is LLVMCoverageGenerator -> coverageGenerator.majorVersion < 12
+                                    is GCCJSONCoverageGenerator -> true
+                                    is GCCGCDACoverageGenerator -> false
+                                    else -> false
+                                }
+                                if (needsSourcefiles) {
+                                    synchronized(CoverageHighlighter.getInstance(project)) {
+                                        val sources = getSourceFiles(project)
+                                        invokeLater {
+                                            CoverageFileAccessProtector.currentlyInCoverage[configuration.project] =
+                                                sources
+                                        }
+                                    }
+                                }
                                 val data =
-                                    getCoverageGenerator(environment, configuration.project)?.generateCoverage(
+                                    coverageGenerator?.generateCoverage(
                                         configuration,
                                         environment,
                                         executionTarget,
@@ -188,32 +215,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     CoverageHighlighter.getInstance(configuration.project).setCoverageData(data)
                                 }
                                 if (data != null) {
-                                    for ((_, value) in data.files) {
-                                        val fileNode = object : DefaultMutableTreeNode(value) {
-                                            override fun toString(): String {
-                                                val filePath =
-                                                    (userObject as? CoverageFileData)?.filePath?.replace('\\', '/')
-                                                filePath ?: return userObject.toString()
-                                                val projectPath =
-                                                    configuration.project.basePath?.replace('\\', '/')
-                                                projectPath ?: return filePath
-                                                return if (filePath.startsWith(projectPath)) {
-                                                    Paths.get(projectPath).relativize(Paths.get(filePath)).toString()
-                                                } else {
-                                                    filePath
-                                                }
-                                            }
-                                        }
-
-                                        root.add(fileNode)
-                                        for (function in value.functions.values) {
-                                            fileNode.add(object : DefaultMutableTreeNode(function) {
-                                                override fun toString() =
-                                                    (userObject as? CoverageFunctionData)?.functionName
-                                                        ?: userObject.toString()
-                                            })
-                                        }
-                                    }
+                                    createCoverageViewTree(root, data)
                                 }
                                 invokeLater {
                                     CoverageView.getInstance(configuration.project)
@@ -225,6 +227,13 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     ToolWindowManager.getInstance(configuration.project).getToolWindow("C/C++ Coverage")
                                         ?.show(null)
                                 }
+                            }
+
+                            override fun onFinished() {
+                                invokeAndWaitIfNeeded {
+                                    CoverageFileAccessProtector.currentlyInCoverage.remove(configuration.project)
+                                }
+                                ProjectSemaphore.getInstance(project).semaphore.release()
                             }
                         })
                 }
@@ -259,31 +268,16 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         return coverageGenerator
     }
 
-    private fun hasCompilerFlags(configuration: CMakeAppRunConfiguration, executionTarget: ExecutionTarget): Boolean {
-        if (executionTarget !is CMakeBuildProfileExecutionTarget) {
-            return false
-        }
-
-        fun hasCompilerFlagsImpl(runConfiguration: CMakeConfiguration): Boolean {
-            return CLanguageKind.values().any { kind ->
-                val list = runConfiguration.getCombinedCompilerFlags(kind, null)
-                list.contains("--coverage") || list.containsAll(
-                    listOf(
-                        "-fprofile-arcs",
-                        "-ftest-coverage"
-                    )
-                ) || (list.contains("-fcoverage-mapping") && list.any {
-                    it.matches("-fprofile-instr-generate(=.*)?".toRegex())
-                })
-            }
-        }
-
+    private fun getCMakeConfigurations(
+        configuration: CMakeAppRunConfiguration,
+        executionTarget: CMakeBuildProfileExecutionTarget
+    ): Sequence<CMakeConfiguration> {
         return if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
             val testData = configuration.testData as CidrCTestRunConfigurationData
             testData.infos?.mapNotNull {
                 it?.command?.exePath
-            }?.distinct()?.mapNotNull { executable ->
-                CMakeWorkspace.getInstance(configuration.project).modelTargets.mapNotNull { target ->
+            }?.distinct()?.asSequence()?.mapNotNull { executable ->
+                CMakeWorkspace.getInstance(configuration.project).modelTargets.asSequence().mapNotNull { target ->
                     target.buildConfigurations.find { it.profileName == executionTarget.profileName }
                 }.find {
                     it.productFile?.name == executable.substringAfterLast(
@@ -291,17 +285,97 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                         if (SystemInfo.isWindows) executable.substringAfterLast('\\') else executable
                     )
                 }
-            }?.any(::hasCompilerFlagsImpl) ?: false
+            } ?: emptySequence()
         } else {
             val runConfiguration =
-                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration ?: return false
-            hasCompilerFlagsImpl(runConfiguration)
+                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration
+                    ?: return emptySequence()
+            sequenceOf(runConfiguration)
         }
+    }
+
+    private fun hasCompilerFlags(
+        configuration: CMakeAppRunConfiguration,
+        executionTarget: CMakeBuildProfileExecutionTarget
+    ) = getCMakeConfigurations(configuration, executionTarget).any {
+        CLanguageKind.values().any { kind ->
+            val list = it.getCombinedCompilerFlags(kind, null)
+            list.contains("--coverage") || list.containsAll(
+                listOf(
+                    "-fprofile-arcs",
+                    "-ftest-coverage"
+                )
+            ) || (list.contains("-fcoverage-mapping") && list.any {
+                it.matches("-fprofile-instr-generate(=.*)?".toRegex())
+            })
+        }
+    }
+
+    private fun getSourceFiles(
+        project: Project
+    ): Set<VirtualFile> {
+        return CMakeWorkspace.getInstance(project).module?.let { module ->
+            ModuleRootManager.getInstance(module).contentEntries.map {
+                it.sourceFolderFiles.toSet()
+            }.fold(emptySet()) { result, curr ->
+                result.union(curr)
+            }
+        } ?: emptySet()
     }
 
     private fun explicitlyRequested(configuration: UserDataHolder): Boolean {
         return CoverageGeneratorSettings.getInstance().useCoverageAction && configuration.getUserData(
             STARTED_BY_COVERAGE_BUTTON
         ) == true
+    }
+
+    private fun createCoverageViewTree(root: DefaultMutableTreeNode, data: CoverageData) {
+
+        data class ChosenName(val filepath: String, var count: Int, val data: CoverageFileData) {
+            fun getFilename(): String {
+                return filepath.split('/').takeLast(count).joinToString("/")
+            }
+        }
+
+        val map = mutableMapOf<String, ChosenName>()
+        for ((_, value) in data.files) {
+            var new = ChosenName(value.filePath.replace('\\', '/'), 1, value)
+            val filename = new.getFilename()
+            val existing = map[filename]
+            if (existing == null) {
+                map[filename] = new
+                continue
+            }
+            map.remove(filename)
+            var nonNull: ChosenName = existing
+            while (new.getFilename() == nonNull.getFilename()) {
+                new = new.copy(count = new.count + 1)
+                nonNull = nonNull.copy(count = nonNull.count + 1)
+            }
+            map[new.getFilename()] = new
+            map[nonNull.getFilename()] = nonNull
+        }
+
+        val fileDataToName = map.map {
+            it.value.data to it.key
+        }.toMap()
+
+        for ((_, value) in data.files) {
+            val fileNode = object : DefaultMutableTreeNode(value) {
+                override fun toString(): String {
+                    val coverageFileData = userObject as? CoverageFileData ?: return super.toString()
+                    return fileDataToName[coverageFileData] ?: return super.toString()
+                }
+            }
+
+            root.add(fileNode)
+            for (function in value.functions.values) {
+                fileNode.add(object : DefaultMutableTreeNode(function) {
+                    override fun toString() =
+                        (userObject as? CoverageFunctionData)?.functionName
+                            ?: userObject.toString()
+                })
+            }
+        }
     }
 }

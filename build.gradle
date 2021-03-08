@@ -1,11 +1,11 @@
 plugins {
     id 'java'
     id 'org.jetbrains.intellij' version '0.6.5'
-    id 'org.jetbrains.kotlin.jvm' version '1.4.0'
+    id 'org.jetbrains.kotlin.jvm' version '1.4.31'
 }
 
 group 'net.zero9178'
-version '2020.3.3'
+version '2020.3.4'
 
 sourceCompatibility = 1.8
 
@@ -31,7 +31,7 @@ intellij {
     type 'CL'
 }
 runIde {
-    jvmArgs '-Xmx2G'
+    jvmArgs '-Xmx4G'
 }
 compileKotlin {
     kotlinOptions.jvmTarget = "1.8"

@@ -1,6 +1,7 @@
 package net.zero9178.cov.actions
 
 import com.intellij.execution.ExecutionManager
+import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
@@ -8,7 +9,9 @@ import com.intellij.ide.macro.MacroManager
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.Key
+import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 
 val STARTED_BY_COVERAGE_BUTTON = Key<Boolean>("STARTED_BY_COVERAGE_BUTTON")
@@ -25,14 +28,22 @@ class CoverageButton : DumbAwareAction() {
             e.presentation.isEnabled = false
             return
         }
+        e.presentation.isEnabled = false
         val manager = RunManager.getInstance(project)
-        val settings = manager.selectedConfiguration
-        if (settings == null) {
-            e.presentation.isEnabled = false
-            return
-        }
-        e.presentation.isEnabled = CMakeAppRunConfiguration.getSelectedRunConfiguration(e.project) != null
+        val settings = manager.selectedConfiguration ?: return
         e.presentation.text = "Run '${settings.name}' with C/C++ Coverage Plugin"
+
+        val runConfig = CMakeAppRunConfiguration.getSelectedRunConfiguration(project) ?: return
+        val cmakeConfig = CMakeWorkspace.getInstance(project).getCMakeConfigurationFor(
+            runConfig.getResolveConfiguration(
+                ExecutionTargetManager.getInstance(project).activeTarget
+            )
+        ) ?: return
+        val info = CMakeWorkspace.getInstance(project).getProfileInfoFor(cmakeConfig)
+        val toolchain = info.profile.toolchainName ?: CPPToolchains.getInstance().defaultToolchain?.name ?: return
+        val gen = CoverageGeneratorSettings.getInstance()
+            .getGeneratorFor(toolchain)
+        e.presentation.isEnabled = gen?.first != null
     }
 
     override fun actionPerformed(anActionEvent: AnActionEvent) {
