@@ -13,15 +13,17 @@
     -->
 
     <change-notes><![CDATA[
-            2021.1.4-Eap: <br/>
+            2021.1.5-Eap: <br/>
       <ul>
-        <li>Performance improvements when using GCC 9 or higher</li>
-        <li>Using Coverage Action is now turned on by default</li>
-        <li>Gathering Coverage is now a cancelable task</li>
-        <li>Fixed issue of wrong Coverage Generator being used when the active target was switched during compilation</li>
-        <li>Fixed issue of demangling not working on Mac OS</li>
-        <li>Added support for gathering coverage when using CTest</li>
-        <li>Mitigate exception thrown while gathering coverage when indexing has not yet finished</li>
+        <li>The plugin now protects you from editing files if the gathering coverage process makes use of CLion's AST.
+            This would previously instead lead to an immediate cancellation of gathering coverage</li>
+        <li>A new icon was added in the gutter allowing you to choose which template instantiations coverage should be
+            displayed in the editor</li>
+        <li>The editors highlighting colour scheme now immediately changes upon theme changes</li>
+        <li>Source files in the Coverage View window are now displayed using the filename. If two filenames are identical
+            filepath components are added until any ambiguity is gone</li>
+        <li>Due to technical issues, running coverage automatically upon command line flag detection is now removed.
+            Please use the "Run Coverage" Action.</li>
       </ul>
     ]]></change-notes>
 
