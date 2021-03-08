@@ -165,7 +165,9 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
     private var myHighlighting: Map<VirtualFile, Map<ComparablePair<Int, Int>, HighlightFunctionGroup>> = mapOf()
 
     val highlighting
-        get() = myHighlighting
+        get() = synchronized(this) {
+            myHighlighting
+        }
 
     fun changeActive(group: HighlightFunctionGroup, active: String) {
         assert(group.functions.contains(active))
@@ -187,7 +189,9 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
             }
 
             if (active != null) {
-                group.active = active
+                synchronized(this) {
+                    group.active = active
+                }
             }
             if (openEditor != null) {
                 applyOnHighlightFunction(openEditor, group)
@@ -205,60 +209,64 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
     }
 
     fun setCoverageData(coverageData: CoverageData?) {
-        myHighlighting.values.forEach {
-            it.values.forEach { functionGroup ->
-                Disposer.dispose(functionGroup)
+        synchronized(this) {
+            myHighlighting.values.forEach {
+                it.values.forEach { functionGroup ->
+                    Disposer.dispose(functionGroup)
+                }
             }
-        }
-        myHighlighting = mapOf()
-        clear()
-        if (coverageData == null) {
-            DaemonCodeAnalyzer.getInstance(myProject).restart()
-            return
-        }
-        myHighlighting = coverageData.files.mapValues { (_, file) ->
-            file.functions.values.groupBy {
-                it.startPos toCP it.endPos
-            }.map { entry ->
-                val functions = entry.value.associate { functionData ->
-                    val highlighting = when (functionData.coverage) {
-                        is FunctionLineData -> functionData.coverage.data.map {
-                            Triple(
-                                LogicalPosition(it.key - 1, 0),
-                                LogicalPosition(it.key, 0),
-                                it.value != 0L
-                            )
+            myHighlighting = mapOf()
+            clear()
+            if (coverageData == null) {
+                myProject.putUserData(DUPLICATE_FUNCTION_GROUP, mutableSetOf())
+                DaemonCodeAnalyzer.getInstance(myProject).restart()
+                return
+            }
+            myHighlighting = coverageData.files.mapValues { (_, file) ->
+                file.functions.values.groupBy {
+                    it.startPos toCP it.endPos
+                }.map { entry ->
+                    val functions = entry.value.associate { functionData ->
+                        val highlighting = when (functionData.coverage) {
+                            is FunctionLineData -> functionData.coverage.data.map {
+                                Triple(
+                                    LogicalPosition(it.key - 1, 0),
+                                    LogicalPosition(it.key, 0),
+                                    it.value != 0L
+                                )
+                            }
+                            is FunctionRegionData -> functionData.coverage.data.map {
+                                Triple(
+                                    LogicalPosition(it.startPos.first - 1, it.startPos.second - 1),
+                                    LogicalPosition(it.endPos.first - 1, it.endPos.second - 1),
+                                    it.executionCount != 0L
+                                )
+                            }
                         }
-                        is FunctionRegionData -> functionData.coverage.data.map {
+                        val branches = functionData.branches.map {
                             Triple(
                                 LogicalPosition(it.startPos.first - 1, it.startPos.second - 1),
-                                LogicalPosition(it.endPos.first - 1, it.endPos.second - 1),
-                                it.executionCount != 0L
+                                it.steppedInCount != 0,
+                                it.skippedCount != 0
                             )
                         }
+                        functionData.functionName to HighlightFunction(highlighting, branches)
                     }
-                    val branches = functionData.branches.map {
-                        Triple(
-                            LogicalPosition(it.startPos.first - 1, it.startPos.second - 1),
-                            it.steppedInCount != 0,
-                            it.skippedCount != 0
-                        )
+                    entry.key.first to HighlightFunctionGroup(entry.key, functions, functions.first().key)
+                }.toMap()
+            }.mapNotNull {
+                try {
+                    LocalFileSystem.getInstance().findFileByNioFile(Paths.get(it.key))?.let { vs ->
+                        vs to it.value
                     }
-                    functionData.functionName to HighlightFunction(highlighting, branches)
+                } catch (e: InvalidPathException) {
+                    null
                 }
-                entry.key.first to HighlightFunctionGroup(entry.key, functions, functions.first().key)
             }.toMap()
-        }.mapNotNull {
-            try {
-                LocalFileSystem.getInstance().findFileByNioFile(Paths.get(it.key))?.let { vs ->
-                    vs to it.value
-                }
-            } catch (e: InvalidPathException) {
-                null
-            }
-        }.toMap()
-        EditorFactory.getInstance().allEditors.forEach(::applyOnEditor)
-        DaemonCodeAnalyzer.getInstance(myProject).restart()
+            EditorFactory.getInstance().allEditors.forEach(::applyOnEditor)
+            myProject.putUserData(DUPLICATE_FUNCTION_GROUP, mutableSetOf())
+            DaemonCodeAnalyzer.getInstance(myProject).restart()
+        }
     }
 
     private fun clear() {
