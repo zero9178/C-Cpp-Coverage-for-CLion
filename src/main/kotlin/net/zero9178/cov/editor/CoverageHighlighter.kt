@@ -167,32 +167,41 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
     val highlighting
         get() = myHighlighting
 
-    fun changeActive(editor: Editor, group: HighlightFunctionGroup, active: String) {
+    fun changeActive(group: HighlightFunctionGroup, active: String) {
         assert(group.functions.contains(active))
-        fun changeActiveImpl(editor: Editor, group: HighlightFunctionGroup, active: String?) {
-            myActiveInlays[editor]?.remove(group)?.filterNotNull()?.forEach {
-                Disposer.dispose(it)
+        fun changeActiveImpl(editor: Editor?, group: HighlightFunctionGroup, active: String?) {
+
+            val openEditor = editor ?: myActiveHighlighting.entries.find {
+                it.value.contains(group)
+            }?.key
+            if (openEditor != null) {
+                myActiveInlays[openEditor]?.remove(group)?.filterNotNull()?.forEach {
+                    Disposer.dispose(it)
+                }
+                val markupModel = openEditor.markupModel as? MarkupModelEx ?: return
+                myActiveHighlighting[openEditor]?.remove(group)?.filter {
+                    markupModel.containsHighlighter(it)
+                }?.forEach {
+                    markupModel.removeHighlighter(it)
+                }
             }
-            val markupModel = editor.markupModel as? MarkupModelEx ?: return
-            myActiveHighlighting[editor]?.remove(group)?.filter {
-                markupModel.containsHighlighter(it)
-            }?.forEach {
-                markupModel.removeHighlighter(it)
-            }
+
             if (active != null) {
                 group.active = active
             }
-            applyOnHighlightFunction(editor, group)
-            if (active != null) {
-                val vs = FileDocumentManager.getInstance().getFile(editor.document) ?: return
-                myHighlighting[vs]?.values?.filter {
-                    group.region.first < it.region.first && group.region.second > it.region.second
-                }?.forEach {
-                    changeActiveImpl(editor, it, null)
+            if (openEditor != null) {
+                applyOnHighlightFunction(openEditor, group)
+                if (active != null) {
+                    val vs = FileDocumentManager.getInstance().getFile(openEditor.document) ?: return
+                    myHighlighting[vs]?.values?.filter {
+                        group.region.first < it.region.first && group.region.second > it.region.second
+                    }?.forEach {
+                        changeActiveImpl(openEditor, it, null)
+                    }
                 }
             }
         }
-        changeActiveImpl(editor, group, active)
+        changeActiveImpl(null, group, active)
     }
 
     fun setCoverageData(coverageData: CoverageData?) {
