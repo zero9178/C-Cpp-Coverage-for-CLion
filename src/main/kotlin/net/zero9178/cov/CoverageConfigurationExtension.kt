@@ -1,14 +1,10 @@
 package net.zero9178.cov
 
-import com.intellij.execution.ExecutionTarget
-import com.intellij.execution.ExecutionTargetManager
-import com.intellij.execution.configurations.CommandLineState
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunnerSettings
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.runners.ProgramRunner
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.invokeAndWaitIfNeeded
@@ -19,9 +15,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
-import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
 import com.jetbrains.cidr.cpp.cmake.model.CMakeConfiguration
@@ -36,33 +30,21 @@ import com.jetbrains.cidr.execution.CidrBuildTarget
 import com.jetbrains.cidr.execution.CidrRunConfiguration
 import com.jetbrains.cidr.execution.CidrRunConfigurationExtensionBase
 import com.jetbrains.cidr.execution.ConfigurationExtensionContext
-import com.jetbrains.cidr.execution.coverage.CidrCoverageProgramRunner
 import com.jetbrains.cidr.lang.CLanguageKind
 import com.jetbrains.cidr.lang.toolchains.CidrToolEnvironment
-import net.zero9178.cov.actions.STARTED_BY_COVERAGE_BUTTON
+import net.zero9178.cov.actions.RunCoverageSettings
 import net.zero9178.cov.data.*
 import net.zero9178.cov.editor.CoverageFileAccessProtector
 import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.window.CoverageView
-import java.io.File
 import javax.swing.event.HyperlinkEvent
 import javax.swing.tree.DefaultMutableTreeNode
 
-private val EXECUTION_TARGET_USED = Key<ExecutionTarget>("EXECUTION_TARGET_USED")
-private val GENERAL_COMMAND_LINE = Key<GeneralCommandLine>("GENERAL_COMMAND_LINE")
-
 class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
 
-    override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>): Boolean {
-        return if (CoverageGeneratorSettings.getInstance().useCoverageAction) {
-            val startedByCoverageButton: Boolean? = configuration.getUserData(STARTED_BY_COVERAGE_BUTTON)
-            !(startedByCoverageButton == null || startedByCoverageButton == false)
-        } else {
-            true
-        }
-    }
+    override fun isApplicableFor(configuration: CidrRunConfiguration<*, *>) = true
 
     override fun isEnabledFor(
         applicableConfiguration: CidrRunConfiguration<*, out CidrBuildTarget<*>>,
@@ -72,41 +54,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         if (environment !is CPPEnvironment) {
             return false
         }
-        // Don't check for flags if the user explicitly requested it
-        if (explicitlyRequested(applicableConfiguration)) {
-            return true
-        }
-        val executionTarget =
-            ExecutionTargetManager.getActiveTarget(applicableConfiguration.project) as? CMakeBuildProfileExecutionTarget
-                ?: return false
-        return (applicableConfiguration as? CMakeAppRunConfiguration)?.let {
-            hasCompilerFlags(it, executionTarget)
-        } ?: false
-    }
-
-    override fun patchCommandLineState(
-        configuration: CidrRunConfiguration<*, out CidrBuildTarget<*>>,
-        runnerSettings: RunnerSettings?,
-        environment: CidrToolEnvironment,
-        projectBaseDir: File?,
-        state: CommandLineState,
-        runnerId: String,
-        context: ConfigurationExtensionContext
-    ) {
-        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
-                runnerId
-            ) is CidrCoverageProgramRunner
-        ) {
-            return
-        }
-        context.putUserData(EXECUTION_TARGET_USED, state.executionTarget)
-        val commandLine = context.getUserData(GENERAL_COMMAND_LINE) ?: return
-        getCoverageGenerator(environment, configuration.project)?.patchEnvironment(
-            configuration,
-            environment,
-            state.executionTarget,
-            commandLine
-        )
+        return runnerSettings is RunCoverageSettings
     }
 
     override fun patchCommandLine(
@@ -117,14 +65,15 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        // Have to be super careful about this in the future possibly. Problem is that currently (2020.3) patchCommandLine
-        // gets called before patchCommandLineState. patchCommandLine needs to know the execution target used
-        // to determine which generate needs to be used, to call the generator's patchEnvironment function.
-        // We only get the execution target once in patchCommandLineState though. So instead we put the
-        // GeneralCommandLine into the context and patch everything once in patchCommandLineState. This is fragile
-        // however and depends on 1) the order of the two calls 2) cmdLine still being allowed to be modified
-        // from within patchCommandLineState. I don't know of a better solution as of this moment however
-        context.putUserData(GENERAL_COMMAND_LINE, cmdLine)
+        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || runnerSettings !is RunCoverageSettings) {
+            return
+        }
+        getCoverageGenerator(environment, configuration.project)?.patchEnvironment(
+            configuration,
+            environment,
+            runnerSettings.executionTarget,
+            cmdLine
+        )
     }
 
     override fun attachToProcess(
@@ -135,17 +84,12 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         runnerId: String,
         context: ConfigurationExtensionContext
     ) {
-        val executionTarget = context.getUserData(EXECUTION_TARGET_USED) as? CMakeBuildProfileExecutionTarget
-        if (executionTarget == null || environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || ProgramRunner.findRunnerById(
-                runnerId
-            ) is CidrCoverageProgramRunner
-        ) {
+        if (environment !is CPPEnvironment || configuration !is CMakeAppRunConfiguration || runnerSettings !is RunCoverageSettings) {
             return
         }
-        val wasExplicitlyRequested = explicitlyRequested(configuration)
         handler.addProcessListener(object : ProcessAdapter() {
             override fun processTerminated(event: ProcessEvent) {
-                if (!hasCompilerFlags(configuration, executionTarget) && wasExplicitlyRequested) {
+                if (!hasCompilerFlags(configuration, runnerSettings.executionTarget)) {
                     val factory = CMakeCoverageBuildOptionsInstallerFactory()
                     val installer = factory.getInstaller(configuration)
                     if (installer != null && installer.canInstall(configuration, configuration.project)) {
@@ -207,7 +151,7 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                     coverageGenerator?.generateCoverage(
                                         configuration,
                                         environment,
-                                        executionTarget,
+                                        runnerSettings.executionTarget,
                                         indicator
                                     )
                                 val root = DefaultMutableTreeNode("invisible-root")
@@ -321,12 +265,6 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                 result.union(curr)
             }
         } ?: emptySet()
-    }
-
-    private fun explicitlyRequested(configuration: UserDataHolder): Boolean {
-        return CoverageGeneratorSettings.getInstance().useCoverageAction && configuration.getUserData(
-            STARTED_BY_COVERAGE_BUTTON
-        ) == true
     }
 
     private fun createCoverageViewTree(root: DefaultMutableTreeNode, data: CoverageData) {

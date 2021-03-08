@@ -121,7 +121,6 @@ class SettingsWindowImpl : SettingsWindow() {
         myLoopBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
         myCondBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
         myBooleanOpBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
-        myUseRunner.isSelected = CoverageGeneratorSettings.getInstance().useCoverageAction
         myDoBranchCoverage.isSelected = CoverageGeneratorSettings.getInstance().branchCoverageEnabled
         myCalculateExternal.isSelected = CoverageGeneratorSettings.getInstance().calculateExternalSources
     }
@@ -196,7 +195,6 @@ class SettingsWindowImpl : SettingsWindow() {
                 || myCondBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
                 || myBooleanOpBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
                 || myDoBranchCoverage.isSelected != CoverageGeneratorSettings.getInstance().branchCoverageEnabled
-                || myUseRunner.isSelected != CoverageGeneratorSettings.getInstance().useCoverageAction
                 || myCalculateExternal.isSelected != CoverageGeneratorSettings.getInstance().calculateExternalSources
 
     override fun getDisplayName() = "C/C++ Coverage"
@@ -208,7 +206,6 @@ class SettingsWindowImpl : SettingsWindow() {
         CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled = myLoopBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled = myCondBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled = myBooleanOpBranchCoverage.isSelected
-        CoverageGeneratorSettings.getInstance().useCoverageAction = myUseRunner.isSelected
         CoverageGeneratorSettings.getInstance().branchCoverageEnabled = myDoBranchCoverage.isSelected
         CoverageGeneratorSettings.getInstance().calculateExternalSources = myCalculateExternal.isSelected
     }

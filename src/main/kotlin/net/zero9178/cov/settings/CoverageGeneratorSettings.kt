@@ -83,12 +83,6 @@ class CoverageGeneratorSettings : PersistentStateComponent<CoverageGeneratorSett
             myState.branchCoverageEnabled = value
         }
 
-    var useCoverageAction: Boolean
-        get() = myState.useCoverageAction
-        set(value) {
-            myState.useCoverageAction = value
-        }
-
     var calculateExternalSources: Boolean
         get() = myState.calculateExternalSources
         set(value) {
