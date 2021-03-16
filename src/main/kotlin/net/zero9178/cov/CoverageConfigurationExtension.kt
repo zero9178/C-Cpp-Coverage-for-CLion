@@ -20,17 +20,13 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.UserDataHolder
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
-import com.jetbrains.cidr.cpp.cmake.model.CMakeConfiguration
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
 import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.execution.coverage.CMakeCoverageBuildOptionsInstallerFactory
-import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
-import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.execution.CidrBuildTarget
 import com.jetbrains.cidr.execution.CidrRunConfiguration
@@ -44,7 +40,7 @@ import net.zero9178.cov.data.*
 import net.zero9178.cov.editor.CoverageFileAccessProtector
 import net.zero9178.cov.editor.CoverageHighlighter
 import net.zero9178.cov.settings.CoverageGeneratorSettings
-import net.zero9178.cov.util.isCTestInstalled
+import net.zero9178.cov.util.getCMakeConfigurations
 import net.zero9178.cov.window.CoverageView
 import java.io.File
 import javax.swing.event.HyperlinkEvent
@@ -99,13 +95,15 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
         ) {
             return
         }
-        context.putUserData(EXECUTION_TARGET_USED, state.executionTarget)
+        val executionTarget = state.executionTarget as? CMakeBuildProfileExecutionTarget ?: return
+        context.putUserData(EXECUTION_TARGET_USED, executionTarget)
         val commandLine = context.getUserData(GENERAL_COMMAND_LINE) ?: return
         getCoverageGenerator(environment, configuration.project)?.patchEnvironment(
             configuration,
             environment,
-            state.executionTarget,
-            commandLine
+            executionTarget,
+            commandLine,
+            context
         )
     }
 
@@ -208,7 +206,8 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
                                         configuration,
                                         environment,
                                         executionTarget,
-                                        indicator
+                                        indicator,
+                                        context
                                     )
                                 val root = DefaultMutableTreeNode("invisible-root")
                                 invokeLater {
@@ -266,32 +265,6 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
             return null
         }
         return coverageGenerator
-    }
-
-    private fun getCMakeConfigurations(
-        configuration: CMakeAppRunConfiguration,
-        executionTarget: CMakeBuildProfileExecutionTarget
-    ): Sequence<CMakeConfiguration> {
-        return if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
-            val testData = configuration.testData as CidrCTestRunConfigurationData
-            testData.infos?.mapNotNull {
-                it?.command?.exePath
-            }?.distinct()?.asSequence()?.mapNotNull { executable ->
-                CMakeWorkspace.getInstance(configuration.project).modelTargets.asSequence().mapNotNull { target ->
-                    target.buildConfigurations.find { it.profileName == executionTarget.profileName }
-                }.find {
-                    it.productFile?.name == executable.substringAfterLast(
-                        '/',
-                        if (SystemInfo.isWindows) executable.substringAfterLast('\\') else executable
-                    )
-                }
-            } ?: emptySequence()
-        } else {
-            val runConfiguration =
-                configuration.getBuildAndRunConfigurations(executionTarget)?.buildConfiguration
-                    ?: return emptySequence()
-            sequenceOf(runConfiguration)
-        }
     }
 
     private fun hasCompilerFlags(
