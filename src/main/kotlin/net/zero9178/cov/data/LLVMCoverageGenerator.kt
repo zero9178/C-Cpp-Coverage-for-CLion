@@ -4,7 +4,6 @@ import com.beust.klaxon.JsonArray
 import com.beust.klaxon.JsonObject
 import com.beust.klaxon.Parser
 import com.beust.klaxon.jackson.jackson
-import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -16,6 +15,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
@@ -26,21 +26,49 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.io.delete
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.execution.testing.CMakeTestRunConfiguration
 import com.jetbrains.cidr.cpp.execution.testing.ctest.CidrCTestRunConfigurationData
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.execution.ConfigurationExtensionContext
+import com.jetbrains.cidr.lang.CLanguageKind
 import com.jetbrains.cidr.lang.parser.OCTokenTypes
 import com.jetbrains.cidr.lang.psi.*
 import com.jetbrains.cidr.lang.psi.visitors.OCVisitor
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.ComparablePair
+import net.zero9178.cov.util.getCMakeConfigurations
 import net.zero9178.cov.util.isCTestInstalled
 import net.zero9178.cov.util.toCP
+import java.io.File
 import java.io.StringReader
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import kotlin.math.ceil
+
+private sealed class Component
+
+private data class RegexComponent(val pattern: Regex) : Component() {
+    override fun equals(other: Any?): Boolean {
+        if (other !is RegexComponent) {
+            return false
+        }
+        return pattern.pattern == other.pattern.pattern
+    }
+
+    override fun hashCode(): Int {
+        return pattern.pattern.hashCode()
+    }
+}
+
+private data class PathComponent(val relFile: File) : Component()
+
+private val LLVM_PROFILE_DIRS = Key<List<List<Component>>>("LLVM_PROFILE_DIRS")
+private val PROFILE_INSTR_GENERATE = "-fprofile-instr-generate=?(.+)".toRegex()
+private val SUPPORTED_PATTERNS = "%(p|h|c|\\d*m)".toRegex()
 
 class LLVMCoverageGenerator(
     val majorVersion: Int,
@@ -57,21 +85,139 @@ class LLVMCoverageGenerator(
         const val GAP = 3
     }
 
+    private fun profPatternToRegex(filename: String): Regex {
+        var pattern = ""
+        var curr = filename
+        while (curr.isNotEmpty()) {
+            val result = SUPPORTED_PATTERNS.find(curr)
+            if (result == null) {
+                pattern += Regex.escape(curr)
+                curr = ""
+                continue
+            }
+            pattern += Regex.escape(curr.substring(0, result.range.first))
+            pattern = when (result.groupValues[1]) {
+                "p" ->
+                    "$pattern\\d+"
+                "h" -> "$pattern.+"
+                "c" -> pattern
+                else -> {
+                    //\\d+m
+                    "$pattern\\d+_\\d+"
+                }
+            }
+            curr = curr.substring(result.range.last + 1)
+        }
+        return pattern.toRegex()
+    }
+
+    private fun localPathToComponents(file: File): List<Component> {
+        // Filter out the %t directory early. It does not expand to a regex match
+        val path = if (file.toString().contains("%t")) {
+            Paths.get(file.toString().replace("%t", System.getenv("TMPDIR") ?: ""))
+        } else {
+            file.toPath()
+        }
+        return path.fold<Path, List<Component>>(listOf(PathComponent(path.root.toFile()))) { result, curr ->
+            when {
+                curr.toString().contains(SUPPORTED_PATTERNS) -> {
+                    result + RegexComponent(profPatternToRegex(curr.toString()))
+                }
+                result.lastOrNull() is PathComponent -> {
+                    val prev = result.lastOrNull() as PathComponent
+                    result.dropLast(1) + PathComponent(prev.relFile.resolve(curr.toFile()))
+                }
+                else -> {
+                    result + PathComponent(curr.toFile())
+                }
+            }
+        }
+    }
+
+    private fun toAbsoluteProfileDir(
+        file: String,
+        configuration: CMakeAppRunConfiguration,
+        environment: CPPEnvironment,
+        workingDir: File?
+    ): List<List<Component>> {
+        val asFile = File(environment.toLocalPath(file))
+        return if (asFile.isAbsolute) {
+            listOf(localPathToComponents(asFile))
+        } else {
+            if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
+                val data = configuration.testData as CidrCTestRunConfigurationData
+                data.testListCopy?.mapNotNull {
+                    val directory = it.command?.workDirectory ?: it.command?.exePath?.run { File(this).parentFile }
+                    directory?.resolve(asFile)?.normalize()?.run {
+                        localPathToComponents(this)
+                    }
+                }?.distinct() ?: emptyList()
+            } else {
+                val result = workingDir?.resolve(
+                    asFile
+                )?.normalize()
+                if (result == null) {
+                    emptyList()
+                } else {
+                    listOf(localPathToComponents(result))
+                }
+            }
+        }
+    }
+
     override fun patchEnvironment(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget,
-        cmdLine: GeneralCommandLine
+        executionTarget: CMakeBuildProfileExecutionTarget,
+        cmdLine: GeneralCommandLine,
+        context: ConfigurationExtensionContext
     ) {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return
-        cmdLine.withEnvironment(
-            "LLVM_PROFILE_FILE",
-            environment.toEnvPath(
+        val workingDirectory = cmdLine.workDirectory ?: config.productFile?.parentFile
+        val env = cmdLine.environment["LLVM_PROFILE_FILE"]
+        if (env != null) {
+            context.putUserData(
+                LLVM_PROFILE_DIRS,
+                toAbsoluteProfileDir(env, configuration, environment, workingDirectory)
+            )
+            return
+        }
+        val paths = getCMakeConfigurations(configuration, executionTarget).flatMap {
+            CLanguageKind.values().flatMap { language ->
+                it.getCombinedCompilerFlags(language, null).map { param ->
+                    val result = PROFILE_INSTR_GENERATE.find(param)
+                    if (result != null) {
+                        result.groupValues[1]
+                    } else {
+                        null
+                    }
+                }
+            }
+        }.filterNotNull().toList().distinct()
+        if (paths.isEmpty()) {
+            val toEnvPath = environment.toEnvPath(
                 config.configurationGenerationDir.resolve("%4m.profraw").absolutePath
             )
-        )
+            cmdLine.withEnvironment(
+                "LLVM_PROFILE_FILE",
+                toEnvPath
+            )
+            context.putUserData(
+                LLVM_PROFILE_DIRS,
+                listOf(
+                    listOf(
+                        PathComponent(config.configurationGenerationDir),
+                        RegexComponent("\\d+_\\d+\\.profraw".toRegex())
+                    )
+                )
+            )
+            return
+        }
+        context.putUserData(LLVM_PROFILE_DIRS, paths.flatMap {
+            toAbsoluteProfileDir(it, configuration, environment, workingDirectory)
+        }.distinct())
     }
 
     private data class Data(val files: List<String>, val functions: List<Function>)
@@ -549,16 +695,37 @@ class LLVMCoverageGenerator(
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget,
-        indicator: ProgressIndicator
+        executionTarget: CMakeBuildProfileExecutionTarget,
+        indicator: ProgressIndicator,
+        context: ConfigurationExtensionContext
     ): CoverageData? {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
         ) ?: return null
         val configurationGenerationDir = config.configurationGenerationDir
 
-        val files = configurationGenerationDir.listFiles()
-            ?.filter { it.name.endsWith("profraw") } ?: emptyList()
+        val files = context.getUserData(LLVM_PROFILE_DIRS)?.filter { it.isNotEmpty() }?.flatMap { components ->
+            val initial = when (val first = components.first()) {
+                is PathComponent ->
+                    listOf(first.relFile)
+                is RegexComponent ->
+                    // Kinda screwed in this case. No choice but to pick a root
+                    File.listRoots().firstOrNull()?.listFiles()?.filter { it.name.matches(first.pattern) }
+                        ?: emptyList()
+            }
+            components.drop(1).fold(initial) { result, curr ->
+                when (curr) {
+                    is PathComponent ->
+                        result.map {
+                            it.resolve(curr.relFile)
+                        }
+                    is RegexComponent ->
+                        result.flatMap {
+                            it.listFiles()?.filter { file -> file.name.matches(curr.pattern) } ?: emptyList()
+                        }
+                }
+            }
+        }?.distinct() ?: emptyList()
 
         val tempFile = Files.createTempFile(configurationGenerationDir.toPath(), null, ".profdata")
         val profdataStart = System.nanoTime()
@@ -567,8 +734,8 @@ class LLVMCoverageGenerator(
                 listOf(
                     myLLVMProf,
                     "merge",
-                "-output=${tempFile}"
-            ) + files.map { environment.toEnvPath(it.absolutePath) })
+                    "-output=${tempFile}"
+                ) + files.map { environment.toEnvPath(it.absolutePath) })
                 .withWorkDirectory(environment.toEnvPath(configurationGenerationDir.absolutePath)),
             indicator,
             -1

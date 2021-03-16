@@ -4,7 +4,6 @@ import com.github.h0tk3y.betterParse.combinators.*
 import com.github.h0tk3y.betterParse.grammar.Grammar
 import com.github.h0tk3y.betterParse.grammar.parseToEnd
 import com.github.h0tk3y.betterParse.parser.ParseException
-import com.intellij.execution.ExecutionTarget
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -13,7 +12,9 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
+import com.jetbrains.cidr.execution.ConfigurationExtensionContext
 import net.zero9178.cov.settings.CoverageGeneratorSettings
 import net.zero9178.cov.util.toCP
 import java.nio.file.Files
@@ -210,8 +211,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
     override fun generateCoverage(
         configuration: CMakeAppRunConfiguration,
         environment: CPPEnvironment,
-        executionTarget: ExecutionTarget,
-        indicator: ProgressIndicator
+        executionTarget: CMakeBuildProfileExecutionTarget,
+        indicator: ProgressIndicator,
+        context: ConfigurationExtensionContext
     ): CoverageData? {
         val config = CMakeWorkspace.getInstance(configuration.project).getCMakeConfigurationFor(
             configuration.getResolveConfiguration(executionTarget)
