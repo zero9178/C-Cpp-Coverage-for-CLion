@@ -275,23 +275,31 @@ class CoverageConfigurationExtension : CidrRunConfigurationExtensionBase() {
             }
         }
 
+        val previouslyChanged = mutableSetOf<String>()
         val map = mutableMapOf<String, ChosenName>()
         for ((_, value) in data.files) {
             var new = ChosenName(value.filePath.replace('\\', '/'), 1, value)
             val filename = new.getFilename()
-            val existing = map[filename]
-            if (existing == null) {
+            var existing = map[filename]
+            if (existing == null && !previouslyChanged.contains(filename)) {
                 map[filename] = new
                 continue
             }
             map.remove(filename)
-            var nonNull: ChosenName = existing
-            while (new.getFilename() == nonNull.getFilename()) {
+            while (new.getFilename() == existing?.getFilename() || previouslyChanged.contains(new.getFilename())) {
+                previouslyChanged.add(new.getFilename())
                 new = new.copy(count = new.count + 1)
-                nonNull = nonNull.copy(count = nonNull.count + 1)
+                existing = existing?.copy(count = existing.count + 1)
+                if (existing == null) {
+                    // If existing is null due to a filename being part of previouslyChanged, also attempt to find
+                    // existing files that might also have to be changed a long the way
+                    existing = map[new.getFilename()]
+                }
             }
             map[new.getFilename()] = new
-            map[nonNull.getFilename()] = nonNull
+            existing?.let {
+                map[it.getFilename()] = it
+            }
         }
 
         val fileDataToName = map.map {
