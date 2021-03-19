@@ -6,6 +6,7 @@ import com.beust.klaxon.jackson.jackson
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
@@ -51,322 +52,325 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         if (lines.isEmpty()) {
             return emptyList()
         }
-        return DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageBranchData>> {
-            val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return@runReadActionInSmartMode emptyList()
-            val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return@runReadActionInSmartMode emptyList()
-            val document =
-                PsiDocumentManager.getInstance(project).getDocument(psiFile)
-                    ?: return@runReadActionInSmartMode emptyList()
-            lines.filter { it.branches.isNotEmpty() }.flatMap { line ->
-                try {
-                    val startOffset = document.getLineStartOffset(line.lineNumber.toInt() - 1)
-                    val lineEndOffset = document.getLineEndOffset(line.lineNumber.toInt() - 1)
-                    val result = mutableListOf<OCElement>()
-                    val leftOutStmts = mutableListOf<OCElement>()
-                    object : OCRecursiveVisitor(
-                        TextRange(
-                            startOffset,
-                            lineEndOffset
-                        )
-                    ) {
-                        override fun visitLoopStatement(loop: OCLoopStatement?) {
-                            loop ?: return super.visitLoopStatement(loop)
-                            matchBranch(loop)
-                            super.visitLoopStatement(loop)
-                        }
+        val vfs = LocalFileSystem.getInstance().findFileByPath(file) ?: return emptyList()
+        val psiFile = PsiManager.getInstance(project).findFile(vfs) ?: return emptyList()
+        val document =
+            PsiDocumentManager.getInstance(project).getDocument(psiFile)
+                ?: return emptyList()
+        return lines.filter { it.branches.isNotEmpty() }.flatMap { line ->
+            try {
+                val startOffset = document.getLineStartOffset(line.lineNumber.toInt() - 1)
+                val lineEndOffset = document.getLineEndOffset(line.lineNumber.toInt() - 1)
+                val result = mutableListOf<OCElement>()
+                val leftOutStmts = mutableListOf<OCElement>()
+                object : OCRecursiveVisitor(
+                    TextRange(
+                        startOffset,
+                        lineEndOffset
+                    )
+                ) {
+                    override fun visitLoopStatement(loop: OCLoopStatement?) {
+                        loop ?: return super.visitLoopStatement(loop)
+                        matchBranch(loop)
+                        super.visitLoopStatement(loop)
+                    }
 
-                        override fun visitIfStatement(stmt: OCIfStatement?) {
-                            stmt ?: return super.visitIfStatement(stmt)
-                            matchBranch(stmt)
-                            super.visitIfStatement(stmt)
-                        }
+                    override fun visitIfStatement(stmt: OCIfStatement?) {
+                        stmt ?: return super.visitIfStatement(stmt)
+                        matchBranch(stmt)
+                        super.visitIfStatement(stmt)
+                    }
 
-                        override fun visitConditionalExpression(expression: OCConditionalExpression?) {
-                            expression ?: return super.visitConditionalExpression(expression)
-                            matchBranch(expression)
-                            super.visitConditionalExpression(expression)
-                        }
+                    override fun visitConditionalExpression(expression: OCConditionalExpression?) {
+                        expression ?: return super.visitConditionalExpression(expression)
+                        matchBranch(expression)
+                        super.visitConditionalExpression(expression)
+                    }
 
-                        private fun matchBranch(element: OCElement) {
-                            //When an statement that'd usually have branch coverage contains an boolean expression as its condition
-                            //no branch coverage is generated for the coverage. Instead we put that statement into leftOutStmts
-                            //and later down below evaluate the branch coverage of the whole boolean expression to figure out
-                            //the branch coverage of the whole condition
-                            val isShortCicuit = { statement: OCElement, condition: PsiElement ->
-                                val list = PsiTreeUtil.getChildrenOfTypeAsList(
-                                    condition,
-                                    OCBinaryExpression::class.java
-                                )
-                                if (list.any { listOf("||", "or", "&&", "and").contains(it.operationSignNode.text) }) {
-                                    leftOutStmts += statement
-                                    true
-                                } else {
-                                    false
-                                }
+                    private fun matchBranch(element: OCElement) {
+                        //When an statement that'd usually have branch coverage contains an boolean expression as its condition
+                        //no branch coverage is generated for the coverage. Instead we put that statement into leftOutStmts
+                        //and later down below evaluate the branch coverage of the whole boolean expression to figure out
+                        //the branch coverage of the whole condition
+                        val isShortCicuit = { statement: OCElement, condition: PsiElement ->
+                            val list = PsiTreeUtil.getChildrenOfTypeAsList(
+                                condition,
+                                OCBinaryExpression::class.java
+                            )
+                            if (list.any { listOf("||", "or", "&&", "and").contains(it.operationSignNode.text) }) {
+                                leftOutStmts += statement
+                                true
+                            } else {
+                                false
                             }
+                        }
 
-                            when (element) {
-                                is OCIfStatement -> {
-                                    if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
-                                        return
-                                    }
-                                    if (element.condition?.let { isShortCicuit(element, it) } == true) {
-                                        return
-                                    }
+                        when (element) {
+                            is OCIfStatement -> {
+                                if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
+                                    return
                                 }
-                                is OCConditionalExpression -> {
-                                    if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
-                                        return
-                                    }
-                                    if (isShortCicuit(element, element.condition)) {
-                                        return
-                                    }
-                                }
-                                is OCDoWhileStatement -> {
-                                    if (element.lastChild.textOffset !in startOffset..lineEndOffset) {
-                                        return
-                                    }
-                                }
-                                else -> {
-                                    if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
-                                        return
-                                    }
-                                }
-                            }
-
-                            if (element is OCLoopStatement) {
                                 if (element.condition?.let { isShortCicuit(element, it) } == true) {
                                     return
                                 }
                             }
-
-                            result += element
+                            is OCConditionalExpression -> {
+                                if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
+                                    return
+                                }
+                                if (isShortCicuit(element, element.condition)) {
+                                    return
+                                }
+                            }
+                            is OCDoWhileStatement -> {
+                                if (element.lastChild.textOffset !in startOffset..lineEndOffset) {
+                                    return
+                                }
+                            }
+                            else -> {
+                                if (element.firstChild.textOffset !in startOffset..lineEndOffset) {
+                                    return
+                                }
+                            }
                         }
 
-                        override fun visitBinaryExpression(expression: OCBinaryExpression?) {
-                            super.visitBinaryExpression(expression)
-                            expression ?: return
-                            when (expression.operationSignNode.text) {
-                                "||", "or", "&&", "and" -> {
-                                    //Calling with the operands here as it creates a branch for each operand
-                                    val left = expression.left
-                                    if (left != null) {
-                                        if (PsiTreeUtil.findChildrenOfType(left, OCBinaryExpression::class.java).none {
-                                                listOf("||", "or", "&&", "and").contains(it.operationSignNode.text)
-                                            }) {
-                                            matchBranch(left)
-                                        }
+                        if (element is OCLoopStatement) {
+                            if (element.condition?.let { isShortCicuit(element, it) } == true) {
+                                return
+                            }
+                        }
+
+                        result += element
+                    }
+
+                    override fun visitBinaryExpression(expression: OCBinaryExpression?) {
+                        super.visitBinaryExpression(expression)
+                        expression ?: return
+                        when (expression.operationSignNode.text) {
+                            "||", "or", "&&", "and" -> {
+                                //Calling with the operands here as it creates a branch for each operand
+                                val left = expression.left
+                                if (left != null) {
+                                    if (PsiTreeUtil.findChildrenOfType(left, OCBinaryExpression::class.java).none {
+                                            listOf("||", "or", "&&", "and").contains(it.operationSignNode.text)
+                                        }) {
+                                        matchBranch(left)
                                     }
-                                    val right = expression.right
-                                    if (right != null) {
-                                        if (PsiTreeUtil.findChildrenOfType(right, OCBinaryExpression::class.java).none {
-                                                listOf("||", "or", "&&", "and").contains(it.operationSignNode.text)
-                                            }) {
-                                            matchBranch(right)
-                                        }
+                                }
+                                val right = expression.right
+                                if (right != null) {
+                                    if (PsiTreeUtil.findChildrenOfType(right, OCBinaryExpression::class.java).none {
+                                            listOf("||", "or", "&&", "and").contains(it.operationSignNode.text)
+                                        }) {
+                                        matchBranch(right)
                                     }
                                 }
                             }
                         }
-                    }.visitElement(psiFile)
-
-                    val zip =
-                        line.branches.chunked(2).filter { it.none { branch -> branch.throwing } && it.size == 2 }
-                            .map { it[0] to it[1] }
-                            .zip(result)
-
-                    fun OCElement.getCondition() = when (this) {
-                        is OCIfStatement -> this.condition
-                        is OCLoopStatement -> this.condition
-                        is OCConditionalExpression -> this.condition
-                        else -> null
                     }
+                }.visitElement(psiFile)
 
-                    fun OCElement.getBranchMarkOffset(): Int? {
-                        return when (this) {
-                            is OCIfStatement -> this.lParenth?.startOffset
-                            is OCLoopStatement -> this.lParenth?.startOffset
-                            is OCConditionalExpression -> PsiTreeUtil.findSiblingForward(
-                                this.condition,
-                                OCTokenTypes.QUEST,
+                val zip =
+                    line.branches.chunked(2).filter { it.none { branch -> branch.throwing } && it.size == 2 }
+                        .map { it[0] to it[1] }
+                        .zip(result)
+
+                fun OCElement.getCondition() = when (this) {
+                    is OCIfStatement -> this.condition
+                    is OCLoopStatement -> this.condition
+                    is OCConditionalExpression -> this.condition
+                    else -> null
+                }
+
+                fun OCElement.getBranchMarkOffset(): Int? {
+                    return when (this) {
+                        is OCIfStatement -> this.lParenth?.startOffset
+                        is OCLoopStatement -> this.lParenth?.startOffset
+                        is OCConditionalExpression -> PsiTreeUtil.findSiblingForward(
+                            this.condition,
+                            OCTokenTypes.QUEST,
+                            null
+                        )?.node?.textRange?.endOffset
+                        is OCExpression -> {
+                            val parent = this.parent as? OCBinaryExpression ?: return null
+                            PsiTreeUtil.findSiblingForward(
+                                this,
+                                parent.operationSign,
                                 null
                             )?.node?.textRange?.endOffset
-                            is OCExpression -> {
-                                val parent = this.parent as? OCBinaryExpression ?: return null
-                                PsiTreeUtil.findSiblingForward(
-                                    this,
-                                    parent.operationSign,
-                                    null
-                                )?.node?.textRange?.endOffset
-                            }
-                            else -> null
                         }
+                        else -> null
                     }
+                }
 
-                    /**
-                     * Here we evaluate the boolean expressions inside of a condition to figure out the branch coverage
-                     * of the condition
-                     *
-                     * OR Test code:
-                     * for(; E0 || ... || En;) {
-                     *      ...
-                     * }
-                     *
-                     * How gcov sees it:
-                     * {
-                     *  int i = 0;
-                     * check:
-                     *  if(E0)//Branch 1
-                     *  {
-                     *      goto body;
-                     *  }
-                     *  else if(E1)
-                     *  {
-                     *
-                     *  }
-                     *  ...
-                     *  else if(!(En))//Branch 2
-                     *  {
-                     *      goto end;
-                     *  }
-                     *  else
-                     *  {
-                     *      goto body;
-                     *  }
-                     *  body:
-                     *  ...
-                     *  goto check;
-                     *  end:
-                     *
-                     *  AND Test code:
-                     * for(int i = 0; i < 5 && i % 2 == 0; i++) {
-                     *      ...
-                     * }
-                     *
-                     * How gcov sees it:
-                     * {
-                     *  int i = 0;
-                     * check:
-                     *  if(i < 5)//Branch 1
-                     *  {
-                     *      if(i % 2 == 0)//Branch 2
-                     *      {
-                     *          goto body;
-                     *      }
-                     *      else
-                     *      {
-                     *          goto end;
-                     *      }
-                     *  }
-                     *  else
-                     *  {
-                     *      goto end;
-                     *  }
-                     *  body:
-                     *  ...
-                     *  goto check;
-                     *  end:
-                     *
-                     *  To figure out the branch probability of a condition that has boolean operators
-                     *  we need to check how many times the else was NOT reached in case of OR or check how many times
-                     *  all branches reached the deepest body
-                     */
-                    val stmts = leftOutStmts.map { thisStmt ->
-                        val filter =
-                            zip.filter { thisStmt.getCondition()?.textRange?.contains(it.second.textRange) ?: false }
-                        thisStmt to filter
-                            .foldIndexed<Pair<Pair<Branch, Branch>, OCElement>, Pair<Int, Int>?>(null) { index, current, (branches, element) ->
-                                val skipped = if (branches.first.fallthrough) branches.second else branches.first
-                                val steppedIn = if (branches.first.fallthrough) branches.first else branches.second
+                /**
+                 * Here we evaluate the boolean expressions inside of a condition to figure out the branch coverage
+                 * of the condition
+                 *
+                 * OR Test code:
+                 * for(; E0 || ... || En;) {
+                 *      ...
+                 * }
+                 *
+                 * How gcov sees it:
+                 * {
+                 *  int i = 0;
+                 * check:
+                 *  if(E0)//Branch 1
+                 *  {
+                 *      goto body;
+                 *  }
+                 *  else if(E1)
+                 *  {
+                 *
+                 *  }
+                 *  ...
+                 *  else if(!(En))//Branch 2
+                 *  {
+                 *      goto end;
+                 *  }
+                 *  else
+                 *  {
+                 *      goto body;
+                 *  }
+                 *  body:
+                 *  ...
+                 *  goto check;
+                 *  end:
+                 *
+                 *  AND Test code:
+                 * for(int i = 0; i < 5 && i % 2 == 0; i++) {
+                 *      ...
+                 * }
+                 *
+                 * How gcov sees it:
+                 * {
+                 *  int i = 0;
+                 * check:
+                 *  if(i < 5)//Branch 1
+                 *  {
+                 *      if(i % 2 == 0)//Branch 2
+                 *      {
+                 *          goto body;
+                 *      }
+                 *      else
+                 *      {
+                 *          goto end;
+                 *      }
+                 *  }
+                 *  else
+                 *  {
+                 *      goto end;
+                 *  }
+                 *  body:
+                 *  ...
+                 *  goto check;
+                 *  end:
+                 *
+                 *  To figure out the branch probability of a condition that has boolean operators
+                 *  we need to check how many times the else was NOT reached in case of OR or check how many times
+                 *  all branches reached the deepest body
+                 */
+                val stmts = leftOutStmts.map { thisStmt ->
+                    val filter =
+                        zip.filter { thisStmt.getCondition()?.textRange?.contains(it.second.textRange) ?: false }
+                    thisStmt to filter
+                        .foldIndexed<Pair<Pair<Branch, Branch>, OCElement>, Pair<Int, Int>?>(null) { index, current, (branches, element) ->
+                            val skipped = if (branches.first.fallthrough) branches.second else branches.first
+                            val steppedIn = if (branches.first.fallthrough) branches.first else branches.second
 
-                                //if current != null than operand is always the one in the second branch so to say
-                                val parentExpression =
-                                    element.parent as? OCBinaryExpression ?: return@foldIndexed current
-                                val isLast = index == filter.lastIndex
-                                when (parentExpression.operationSignNode.text) {
-                                    "or", "||" -> if (current == null) {
-                                        skipped.count.toInt() to steppedIn.count.toInt()
-                                    } else {
-                                        if (current.second != 0) {
-                                            if (isLast) {
-                                                current.first + skipped.count.toInt() to steppedIn.count.toInt()
-                                            } else {
-                                                current.first + steppedIn.count.toInt() to skipped.count.toInt()
-                                            }
+                            //if current != null than operand is always the one in the second branch so to say
+                            val parentExpression =
+                                element.parent as? OCBinaryExpression ?: return@foldIndexed current
+                            val isLast = index == filter.lastIndex
+                            when (parentExpression.operationSignNode.text) {
+                                "or", "||" -> if (current == null) {
+                                    skipped.count.toInt() to steppedIn.count.toInt()
+                                } else {
+                                    if (current.second != 0) {
+                                        if (isLast) {
+                                            current.first + skipped.count.toInt() to steppedIn.count.toInt()
                                         } else {
-                                            current
+                                            current.first + steppedIn.count.toInt() to skipped.count.toInt()
                                         }
-                                    }
-                                    "and", "&&" -> if (current == null) {
-                                        steppedIn.count.toInt() to skipped.count.toInt()
                                     } else {
-                                        if (current.first != 0) {
-                                            steppedIn.count.toInt() to current.second + skipped.count.toInt()
-                                        } else {
-                                            current
-                                        }
+                                        current
                                     }
-                                    else -> current
                                 }
+                                "and", "&&" -> if (current == null) {
+                                    steppedIn.count.toInt() to skipped.count.toInt()
+                                } else {
+                                    if (current.first != 0) {
+                                        steppedIn.count.toInt() to current.second + skipped.count.toInt()
+                                    } else {
+                                        current
+                                    }
+                                }
+                                else -> current
                             }
-                    }.filter { it.second != null }.map { it.first to it.second!! }.map { (thisIf, pair) ->
+                        }
+                }.filter { it.second != null }.map { it.first to it.second!! }.map { (thisIf, pair) ->
+                    val startLine =
+                        document.getLineNumber(thisIf.getBranchMarkOffset() ?: thisIf.textOffset) + 1
+                    val startColumn =
+                        (thisIf.getBranchMarkOffset() ?: thisIf.textOffset) - document.getLineStartOffset(
+                            startLine - 1
+                        ) + 1
+                    CoverageBranchData(
+                        startLine toCP startColumn,
+                        pair.first, pair.second
+                    )
+                }
+
+                var lastOCElement: OCElement? = null
+                zip.filter {
+                    when (it.second) {
+                        is OCLoopStatement -> CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
+                        is OCIfStatement -> CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
+                        is OCConditionalExpression -> CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
+                        is OCExpression -> CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
+                        else -> true
+                    }
+                }.fold(stmts) { list, (branches, element) ->
+                    val parent = element.parent
+                    if (parent != null && lastOCElement?.parent === parent) {
+                        lastOCElement = element
+                        return@fold list
+                    }
+                    lastOCElement = element
+                    val steppedIn = if (branches.first.fallthrough) branches.first else branches.second
+                    val skipped = if (branches.first.fallthrough) branches.second else branches.first
+                    list + run {
                         val startLine =
-                            document.getLineNumber(thisIf.getBranchMarkOffset() ?: thisIf.textOffset) + 1
+                            document.getLineNumber(
+                                element.getBranchMarkOffset() ?: element.textOffset
+                            ) + 1
                         val startColumn =
-                            (thisIf.getBranchMarkOffset() ?: thisIf.textOffset) - document.getLineStartOffset(
+                            (element.getBranchMarkOffset()
+                                ?: element.textOffset) - document.getLineStartOffset(
                                 startLine - 1
                             ) + 1
                         CoverageBranchData(
-                            startLine toCP startColumn,
-                            pair.first, pair.second
+                            startLine toCP startColumn, steppedIn.count.toInt(), skipped.count.toInt()
                         )
                     }
-
-                    var lastOCElement: OCElement? = null
-                    zip.filter {
-                        when (it.second) {
-                            is OCLoopStatement -> CoverageGeneratorSettings.getInstance().loopBranchCoverageEnabled
-                            is OCIfStatement -> CoverageGeneratorSettings.getInstance().ifBranchCoverageEnabled
-                            is OCConditionalExpression -> CoverageGeneratorSettings.getInstance().conditionalExpCoverageEnabled
-                            is OCExpression -> CoverageGeneratorSettings.getInstance().booleanOpBranchCoverageEnabled
-                            else -> true
-                        }
-                    }.fold(stmts) { list, (branches, element) ->
-                        val parent = element.parent
-                        if (parent != null && lastOCElement?.parent === parent) {
-                            lastOCElement = element
-                            return@fold list
-                        }
-                        lastOCElement = element
-                        val steppedIn = if (branches.first.fallthrough) branches.first else branches.second
-                        val skipped = if (branches.first.fallthrough) branches.second else branches.first
-                        list + run {
-                            val startLine =
-                                document.getLineNumber(
-                                    element.getBranchMarkOffset() ?: element.textOffset
-                                ) + 1
-                            val startColumn =
-                                (element.getBranchMarkOffset()
-                                    ?: element.textOffset) - document.getLineStartOffset(
-                                    startLine - 1
-                                ) + 1
-                            CoverageBranchData(
-                                startLine toCP startColumn, steppedIn.count.toInt(), skipped.count.toInt()
-                            )
-                        }
-                    }
-                } catch (e: ProcessCanceledException) {
-                    throw e
-                } catch (e: Exception) {
-                    log.warn(e)
-                    emptyList()
                 }
+            } catch (e: ProcessCanceledException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn(e)
+                emptyList()
             }
         }
     }
 
     @Suppress("ConvertCallChainIntoSequence")
-    private fun rootToCoverageData(root: Root, env: CPPEnvironment, project: Project): CoverageData {
+    private fun rootToCoverageData(
+        root: Root,
+        env: CPPEnvironment,
+        project: Project,
+        indicator: ProgressIndicator
+    ): CoverageData {
         val sources = CMakeWorkspace.getInstance(project).module?.let { module ->
             ModuleRootManager.getInstance(module).contentEntries.flatMap {
                 it.sourceFolderFiles.toList()
@@ -386,32 +390,23 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         }
 
         val files = try {
-            filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
-
-                CompletableFuture.supplyAsync {
-                    it.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
-                        val linesOfFunction = file.lines.groupBy { it.functionName }
-                        val functions = file.functions.map { function ->
-                            ProgressManager.checkCanceled()
-                            val lines = linesOfFunction[function.name] ?: emptyList()
-                            CoverageFunctionData(
-                                function.startLine.toInt() toCP 0,
-                                function.endLine.toInt() toCP 0,
-                                function.demangledName,
-                                FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
-                                if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
-                                    findStatementsForBranches(
-                                        lines,
-                                        env.toLocalPath(file.file),
-                                        project
-                                    ) else emptyList()
-                            )
-                        }.associateBy { it.functionName }
-                        CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
-                    }
+            if (!CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
+                processFiles(filesToProcess, env, project)
+            } else {
+                DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageFileData>> {
+                    filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
+                        CompletableFuture.supplyAsync {
+                            runReadAction {
+                                var list = emptyList<CoverageFileData>()
+                                ProgressManager.getInstance().executeProcessUnderProgress({
+                                    list = processFiles(it, env, project)
+                                }, indicator)
+                                list
+                            }
+                        }
+                    }.flatMap { it.join() }
                 }
-
-            }.flatMap { it.join() }.associateBy { it.filePath }
+            }.associateBy { it.filePath }
         } catch (e: CompletionException) {
             val cause = e.cause
             if (cause != null) {
@@ -427,6 +422,31 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
             CoverageGeneratorSettings.getInstance().branchCoverageEnabled,
             CoverageGeneratorSettings.getInstance().calculateExternalSources
         )
+    }
+
+    private fun processFiles(
+        files: List<File>,
+        env: CPPEnvironment,
+        project: Project
+    ) = files.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
+        val linesOfFunction = file.lines.groupBy { it.functionName }
+        val functions = file.functions.map { function ->
+            ProgressManager.checkCanceled()
+            val lines = linesOfFunction[function.name] ?: emptyList()
+            CoverageFunctionData(
+                function.startLine.toInt() toCP 0,
+                function.endLine.toInt() toCP 0,
+                function.demangledName,
+                FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
+                if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
+                    findStatementsForBranches(
+                        lines,
+                        env.toLocalPath(file.file),
+                        project
+                    ) else emptyList()
+            )
+        }.associateBy { it.functionName }
+        CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
     }
 
     private data class Root(
@@ -455,7 +475,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
     private fun processJson(
         jsonContents: List<String>,
         env: CPPEnvironment,
-        project: Project
+        project: Project,
+        indicator: ProgressIndicator
     ): CoverageData {
 
         val jsonStart = System.nanoTime()
@@ -519,7 +540,8 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
         return rootToCoverageData(
             Root(files = files, currentWorkingDirectory = ""),
             env,
-            project
+            project,
+            indicator
         )
     }
 
@@ -565,6 +587,6 @@ class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
         files.forEach { Files.deleteIfExists(Paths.get(environment.toLocalPath(it))) }
 
-        return processJson(lines, environment, configuration.project)
+        return processJson(lines, environment, configuration.project, indicator)
     }
 }
