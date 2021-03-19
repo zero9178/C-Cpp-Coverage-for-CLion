@@ -364,7 +364,12 @@ class LLVMCoverageGenerator(
                             ).map { functions ->
                                 CompletableFuture.supplyAsync {
                                     runReadAction {
-                                        processFunctions(environment, project, demangledNames, file, functions)
+                                        var list = emptyList<CoverageFunctionData>()
+                                        ProgressManager.getInstance().executeProcessUnderProgress({
+                                            list =
+                                                processFunctions(environment, project, demangledNames, file, functions)
+                                        }, indicator)
+                                        list
                                     }
                                 }
                             }.flatMap { it.join() }
