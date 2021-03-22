@@ -13,15 +13,13 @@
     -->
 
     <change-notes><![CDATA[
-            2020.3.4: <br/>
+            2020.3.5: <br/>
       <ul>
-        <li>The plugin now protects you from editing files if the gathering coverage process makes use of CLion's AST.
-            This would previously instead lead to an immediate cancellation of gathering coverage</li>
-        <li>A new icon was added in the gutter allowing you to choose which template instantiations coverage should be
-            displayed in the editor</li>
-        <li>The editors highlighting colour scheme now immediately changes upon theme changes</li>
-        <li>Source files in the Coverage View window are now displayed using the filename. If two filenames are identical,
-            filepath components are added until any ambiguity is removed</li>
+        <li>LLVM Profile file location, either specified by the user using the LLVM_PROFILE_FILE variable or
+            as a compiler flag, will now be correctly respected by the plugin and not be overwritten.</li>
+        <li>Improved implementation of unambiguous file name display in the Coverage View Window.</li>
+        <li>Cancelling getting Coverage is now more reliable and will also cancel in the multi threaded phase
+            of getting branch coverage</li>
       </ul>
     ]]></change-notes>
 
