@@ -13,6 +13,11 @@
     -->
 
     <change-notes><![CDATA[
+            2021.1.6: <br/>
+      <ul>
+        <li> Switched to release non-Eap version</li>
+      </ul>
+
             2021.1.6-Eap: <br/>
       <ul>
         <li>LLVM Profile file location, either specified by the user using the LLVM_PROFILE_FILE variable or
