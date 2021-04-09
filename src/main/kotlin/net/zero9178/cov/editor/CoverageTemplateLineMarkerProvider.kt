@@ -70,7 +70,7 @@ class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
         if (group.functions.size <= 1) {
             return null
         }
-        val callable = element.parents.find {
+        val callable = element.parents(true).find {
             when (it) {
                 is OCFunctionDefinition -> true
                 is OCMethod -> true

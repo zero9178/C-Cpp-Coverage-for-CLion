@@ -146,7 +146,7 @@ class LLVMCoverageGenerator(
         } else {
             if (configuration is CMakeTestRunConfiguration && isCTestInstalled() && configuration.testData is CidrCTestRunConfigurationData) {
                 val data = configuration.testData as CidrCTestRunConfigurationData
-                data.infos?.mapNotNull {
+                data.testListCopy?.mapNotNull {
                     val directory = it.command?.workDirectory ?: it.command?.exePath?.run { File(this).parentFile }
                     directory?.resolve(asFile)?.normalize()?.run {
                         localPathToComponents(this)
@@ -770,7 +770,7 @@ class LLVMCoverageGenerator(
                 if (testData !is CidrCTestRunConfigurationData) {
                     listOf(environment.toEnvPath(config.productFile?.absolutePath ?: ""))
                 } else {
-                    testData.infos?.mapNotNull {
+                    testData.testListCopy?.mapNotNull {
                         it?.command?.exePath
                     }?.distinct() ?: emptyList()
                 }

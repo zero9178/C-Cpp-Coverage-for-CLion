@@ -3,26 +3,32 @@ package net.zero9178.cov.actions
 import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ExecutionTargetManager
 import com.intellij.execution.RunManager
+import com.intellij.execution.configurations.RunnerSettings
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.ide.macro.MacroManager
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
-import com.intellij.openapi.util.Key
 import com.jetbrains.cidr.cpp.cmake.workspace.CMakeWorkspace
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
+import com.jetbrains.cidr.cpp.execution.CMakeBuildProfileExecutionTarget
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains
 import net.zero9178.cov.settings.CoverageGeneratorSettings
+import org.jdom.Element
 
-val STARTED_BY_COVERAGE_BUTTON = Key<Boolean>("STARTED_BY_COVERAGE_BUTTON")
+class RunCoverageSettings(val executionTarget: CMakeBuildProfileExecutionTarget) : RunnerSettings {
+    override fun readExternal(element: Element?) {
+
+    }
+
+    override fun writeExternal(element: Element?) {
+
+    }
+}
 
 class CoverageButton : DumbAwareAction() {
 
     override fun update(e: AnActionEvent) {
-        e.presentation.isEnabledAndVisible = CoverageGeneratorSettings.getInstance().useCoverageAction
-        if (!e.presentation.isEnabledAndVisible) {
-            return
-        }
         val project = e.project
         if (project == null) {
             e.presentation.isEnabled = false
@@ -32,6 +38,10 @@ class CoverageButton : DumbAwareAction() {
         val manager = RunManager.getInstance(project)
         val settings = manager.selectedConfiguration ?: return
         e.presentation.text = "Run '${settings.name}' with C/C++ Coverage Plugin"
+
+        if (ExecutionTargetManager.getActiveTarget(project) !is CMakeBuildProfileExecutionTarget) {
+            return
+        }
 
         val runConfig = CMakeAppRunConfiguration.getSelectedRunConfiguration(project) ?: return
         val cmakeConfig = CMakeWorkspace.getInstance(project).getCMakeConfigurationFor(
@@ -52,22 +62,18 @@ class CoverageButton : DumbAwareAction() {
         val manager = RunManager.getInstance(project)
         val settings = manager.selectedConfiguration ?: return
 
-        /**
-         * Feels a bit wrong and not what UserData was probably intended for but it works, is simple and follows the DRY
-         * Principle so lets do that for now lol
-         */
         val config = settings.configuration as? CMakeAppRunConfiguration ?: return
-        config.putUserData(STARTED_BY_COVERAGE_BUTTON, true)
 
         MacroManager.getInstance().cacheMacrosPreview(anActionEvent.dataContext)
         val envBuilder = ExecutionEnvironmentBuilder.create(executor, settings)
 
+        val executionTarget =
+            ExecutionTargetManager.getActiveTarget(project) as? CMakeBuildProfileExecutionTarget ?: return
         val environment = envBuilder.run {
             dataContext(anActionEvent.dataContext)
             activeTarget()
-        }.build {
-            config.replace(STARTED_BY_COVERAGE_BUTTON, true, null)
-        }
+            runnerSettings(RunCoverageSettings(executionTarget))
+        }.build()
 
         ExecutionManager.getInstance(config.project).restartRunProfile(environment)
     }
