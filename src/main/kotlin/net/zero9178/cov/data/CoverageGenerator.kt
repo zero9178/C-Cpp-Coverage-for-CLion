@@ -76,7 +76,7 @@ fun createGeneratorFor(
         lines[0].contains("gcov", true) -> {
             val version = extractVersion(lines[0])
             return if (version.first >= 9) {
-                GCCJSONCoverageGenerator(executable) to null
+                GCCJSONCoverageGenerator(executable, version.first) to null
             } else {
                 GCCGCDACoverageGenerator(executable, version.first) to null
             }
