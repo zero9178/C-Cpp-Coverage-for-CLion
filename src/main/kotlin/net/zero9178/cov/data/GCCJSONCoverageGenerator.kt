@@ -38,7 +38,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import kotlin.math.ceil
 
-class GCCJSONCoverageGenerator(private val myGcov: String, private val myMajorVersion: Int) : CoverageGenerator {
+class GCCJSONCoverageGenerator(private val myGcov: String) : CoverageGenerator {
 
     companion object {
         val log = Logger.getInstance(GCCJSONCoverageGenerator::class.java)
@@ -562,7 +562,7 @@ class GCCJSONCoverageGenerator(private val myGcov: String, private val myMajorVe
 
         val command = listOf(
             myGcov,
-            if (myMajorVersion >= 11) "-j" else "-i",
+            "-i",
             "-m",
             "-t"
         ) + if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
