@@ -13,9 +13,10 @@
     -->
 
     <change-notes><![CDATA[
-            2021.1.7: <br/>
+            2021.1.8: <br/>
       <ul>
-        <li> Added support for GCC 11</li>
+        <li>MASSIVELY improved performance of branch gathering by making better use of thread utilization, keeping it at
+            practically 100%.</li>
       </ul>
     ]]></change-notes>
 
