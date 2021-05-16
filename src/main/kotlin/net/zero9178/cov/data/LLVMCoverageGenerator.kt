@@ -47,7 +47,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
-import kotlin.math.ceil
+import java.util.concurrent.ConcurrentLinkedQueue
 
 private sealed class Component
 
@@ -327,70 +327,65 @@ class LLVMCoverageGenerator(
 
         val filesMap = datas.flatMap { data ->
             //Associates the filename with a list of all functions in that file
-            val funcMap =
+            val functions =
                 data.functions.flatMap { func ->
-                    func.filenames.map { it to func }
-                }.groupBy({ it.first }) {
-                    it.second
+                    func.filenames.filter {
+                        val filePath = environment.toLocalPath(it).replace('\\', '/')
+                        CoverageGeneratorSettings.getInstance().calculateExternalSources || sources.any {
+                            it == filePath
+                        }
+                    }.map { it to func }
                 }
 
-            data.files.fold(emptyList<CoverageFileData>()) fileFold@{ result, file ->
-
-                val filePath = environment.toLocalPath(file).replace('\\', '/')
-                if (!CoverageGeneratorSettings.getInstance().calculateExternalSources && !sources.any {
-                        it == filePath
-                    }) {
-                    return@fileFold result
+            if (majorVersion >= 12 || !CoverageGeneratorSettings.getInstance()
+                    .branchCoverageEnabled
+            ) {
+                functions.mapNotNull {
+                    processFunction(environment, project, demangledNames, it.first, it.second)?.let { result ->
+                        it.first to result
+                    }
                 }
-
-                val llvmFunctions = funcMap.getOrDefault(
-                    file,
-                    emptyList()
-                )
-
-                val functionsMap = if (majorVersion >= 12 || !CoverageGeneratorSettings.getInstance()
-                        .branchCoverageEnabled
-                ) {
-                    processFunctions(environment, project, demangledNames, file, llvmFunctions)
-                } else {
-                    DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageFunctionData>> {
-                        ProgressManager.checkCanceled()
-                        try {
-                            llvmFunctions.chunked(
-                                ceil(
-                                    data.files.size / Thread.activeCount()
-                                        .toDouble()
-                                ).toInt()
-                            ).map { functions ->
-                                CompletableFuture.supplyAsync {
-                                    runReadAction {
-                                        var list = emptyList<CoverageFunctionData>()
-                                        ProgressManager.getInstance().executeProcessUnderProgress({
-                                            list =
-                                                processFunctions(environment, project, demangledNames, file, functions)
-                                        }, indicator)
-                                        list
-                                    }
+            } else {
+                val queue = ConcurrentLinkedQueue(functions.sortedByDescending {
+                    it.second.regions.size
+                })
+                DumbService.getInstance(project).runReadActionInSmartMode<List<Pair<String, CoverageFunctionData>>> {
+                    ProgressManager.checkCanceled()
+                    try {
+                        (0 until Thread.activeCount()).map {
+                            CompletableFuture.supplyAsync {
+                                runReadAction {
+                                    val list = mutableListOf<Pair<String, CoverageFunctionData>>()
+                                    ProgressManager.getInstance().executeProcessUnderProgress({
+                                        generateSequence { queue.poll() }.forEach {
+                                            processFunction(
+                                                environment,
+                                                project,
+                                                demangledNames,
+                                                it.first,
+                                                it.second
+                                            )?.let { result ->
+                                                list.add(it.first to result)
+                                            }
+                                        }
+                                    }, indicator)
+                                    list
                                 }
-                            }.flatMap { it.join() }
-                        } catch (e: CompletionException) {
-                            val cause = e.cause
-                            if (cause != null) {
-                                throw cause
-                            } else {
-                                throw e
                             }
+                        }.flatMap { it.join() }
+                    } catch (e: CompletionException) {
+                        val cause = e.cause
+                        if (cause != null) {
+                            throw cause
+                        } else {
+                            throw e
                         }
                     }
-                }.associateBy { it.functionName }
-
-                ProgressManager.checkCanceled()
-
-                result + CoverageFileData(
-                    filePath,
-                    functionsMap
-                )
-
+                }
+            }.groupBy { it.first }.map { entry ->
+                CoverageFileData(
+                    environment.toLocalPath(entry.key).replace('\\', '/'),
+                    entry.value.map { it.second }.associateBy { it.functionName })
             }
         }.associateBy { it.filePath }
         log.info("Processing coverage data took ${System.nanoTime() - processDataStart}ns")
@@ -401,20 +396,20 @@ class LLVMCoverageGenerator(
         )
     }
 
-    private fun processFunctions(
+    private fun processFunction(
         environment: CPPEnvironment,
         project: Project,
         demangledNames: Map<String, String>,
         file: String,
-        functions: List<Function>
-    ): List<CoverageFunctionData> = functions.fold(emptyList()) { result, function ->
+        function: Function
+    ): CoverageFunctionData? {
 
         var regions = function.regions.filter {
             function.filenames[it.fileId] == file
         }
 
         if (regions.isEmpty()) {
-            return@fold result
+            return null
         }
 
         val functionRegions = regions.map { region ->
@@ -431,7 +426,7 @@ class LLVMCoverageGenerator(
             )
         }
 
-        result + CoverageFunctionData(
+        return CoverageFunctionData(
             regions.first().start,
             regions.first().end,
             demangledNames[function.name] ?: function.name,

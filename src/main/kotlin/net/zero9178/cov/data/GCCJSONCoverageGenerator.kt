@@ -36,7 +36,7 @@ import java.nio.file.LinkOption
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
-import kotlin.math.ceil
+import java.util.concurrent.ConcurrentLinkedQueue
 
 class GCCJSONCoverageGenerator(private val myGcov: String, private val myMajorVersion: Int) : CoverageGenerator {
 
@@ -391,21 +391,56 @@ class GCCJSONCoverageGenerator(private val myGcov: String, private val myMajorVe
 
         val files = try {
             if (!CoverageGeneratorSettings.getInstance().branchCoverageEnabled) {
-                processFiles(filesToProcess, env, project)
+                filesToProcess.mapNotNull {
+                    processFile(it, env, project)
+                }
             } else {
-                DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageFileData>> {
-                    filesToProcess.chunked(ceil(filesToProcess.size / Thread.activeCount().toDouble()).toInt()).map {
+
+                val lineAssoc = System.nanoTime()
+                val functionsToProcess = filesToProcess.flatMap { file ->
+                    val linesOfFunction = file.lines.groupBy { it.functionName }
+                    val list = file.functions.map {
+                        Triple(file, it, linesOfFunction[it.name] ?: emptyList())
+                    }
+                    list
+                }.sortedByDescending {
+                    it.third.size
+                }
+                log.info("Line assoc took ${System.nanoTime() - lineAssoc} ns")
+
+                val parallelGen = System.nanoTime()
+                val queue = ConcurrentLinkedQueue(functionsToProcess)
+                val result = DumbService.getInstance(project).runReadActionInSmartMode<List<CoverageFileData>> {
+                    (0 until Thread.activeCount()).map {
                         CompletableFuture.supplyAsync {
                             runReadAction {
-                                var list = emptyList<CoverageFileData>()
+                                val map = mutableListOf<Pair<File, CoverageFunctionData>>()
                                 ProgressManager.getInstance().executeProcessUnderProgress({
-                                    list = processFiles(it, env, project)
+                                    generateSequence { queue.poll() }.forEach {
+                                        map.add(
+                                            it.first
+                                                    to
+                                                    processFunction(
+                                                        it.first,
+                                                        it.second,
+                                                        it.third,
+                                                        env,
+                                                        project
+                                                    )
+                                        )
+                                    }
                                 }, indicator)
-                                list
+                                map
                             }
                         }
-                    }.flatMap { it.join() }
+                    }.flatMap { it.get() }.groupBy { it.first }.map { entry ->
+                        CoverageFileData(
+                            env.toLocalPath(entry.key.file).replace('\\', '/'),
+                            entry.value.map { it.second }.associateBy { it.functionName })
+                    }
                 }
+                log.info("Parallel branch gen took ${System.nanoTime() - parallelGen} ns")
+                result
             }.associateBy { it.filePath }
         } catch (e: CompletionException) {
             val cause = e.cause
@@ -424,29 +459,39 @@ class GCCJSONCoverageGenerator(private val myGcov: String, private val myMajorVe
         )
     }
 
-    private fun processFiles(
-        files: List<File>,
+    private fun processFunction(
+        file: File,
+        function: Function,
+        lines: List<Line>,
         env: CPPEnvironment,
         project: Project
-    ) = files.filter { it.lines.isNotEmpty() || it.functions.isNotEmpty() }.map { file ->
+    ) = CoverageFunctionData(
+        function.startLine.toInt() toCP 0,
+        function.endLine.toInt() toCP 0,
+        function.demangledName,
+        FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
+        if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
+            findStatementsForBranches(
+                lines,
+                env.toLocalPath(file.file),
+                project
+            ) else emptyList()
+    )
+
+    private fun processFile(
+        file: File,
+        env: CPPEnvironment,
+        project: Project
+    ): CoverageFileData? {
+        if (file.lines.isEmpty() && file.functions.isEmpty()) {
+            return null
+        }
         val linesOfFunction = file.lines.groupBy { it.functionName }
         val functions = file.functions.map { function ->
-            ProgressManager.checkCanceled()
             val lines = linesOfFunction[function.name] ?: emptyList()
-            CoverageFunctionData(
-                function.startLine.toInt() toCP 0,
-                function.endLine.toInt() toCP 0,
-                function.demangledName,
-                FunctionLineData(lines.associate { it.lineNumber.toInt() to it.count.toLong() }),
-                if (CoverageGeneratorSettings.getInstance().branchCoverageEnabled)
-                    findStatementsForBranches(
-                        lines,
-                        env.toLocalPath(file.file),
-                        project
-                    ) else emptyList()
-            )
+            processFunction(file, function, lines, env, project)
         }.associateBy { it.functionName }
-        CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
+        return CoverageFileData(env.toLocalPath(file.file).replace('\\', '/'), functions)
     }
 
     private data class Root(
