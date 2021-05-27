@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'net.zero9178'
-version '2021.1.8'
+version '2021.2.0'
 
 sourceCompatibility = 1.8
 
@@ -26,7 +26,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version '2021.1'
+    version '212.3116-EAP-CANDIDATE-SNAPSHOT'
     plugins = ['com.intellij.clion','com.intellij.cidr.base','com.intellij.cidr.lang','clion-ctest']
     type 'CL'
 }

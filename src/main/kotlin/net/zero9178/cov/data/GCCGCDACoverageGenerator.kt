@@ -145,10 +145,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                                 .createNotification(
                                     "Error parsing gcov generated files",
-                                    "This is either due to a bug in the plugin or gcov",
                                     "Parser output:${e.errorResult}",
                                     NotificationType.ERROR
-                                ).notify(project)
+                                ).setSubtitle("This is either due to a bug in the plugin or gcov").notify(project)
                             emptyList()
                         }
                     }
@@ -239,7 +238,6 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
                     "gcov returned error code $retCode",
-                    "Invocation and error output:",
                     "Invocation: ${
                         (listOf(
                             myGcov,
@@ -248,7 +246,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                         ) + files).joinToString(" ")
                     }\n Stderr: $lines",
                     NotificationType.ERROR
-                ).notify(configuration.project)
+                ).setSubtitle("Invocation and error output:").notify(configuration.project)
             return null
         }
 
