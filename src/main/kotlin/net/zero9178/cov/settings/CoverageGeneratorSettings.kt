@@ -270,7 +270,7 @@ private fun guessCoverageGeneratorForToolchain(toolchain: CPPToolchains.Toolchai
                 prefix,
                 "llvm-undname",
                 suffix,
-                Paths.get(if (toolset is WSL) toolset.toLocalPath(null, compiler) else compiler).parent
+                Paths.get(compiler).parent
             )
         }
 

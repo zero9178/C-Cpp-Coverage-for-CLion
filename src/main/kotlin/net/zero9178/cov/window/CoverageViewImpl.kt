@@ -399,7 +399,7 @@ private class ProgressBarColumn(
         }
     }
 
-    override fun getRenderer(item: DefaultMutableTreeNode?): TableCellRenderer? {
+    override fun getRenderer(item: DefaultMutableTreeNode?): TableCellRenderer {
         return TableCellRenderer { _, value, _, _, _, _ -> value as CoverageBar }
     }
 
@@ -477,8 +477,7 @@ private fun getBranchCoverage(functionOrFileData: Any): Long {
         return it.branches.map { op ->
             when {
                 op.skippedCount != 0 && op.steppedInCount != 0 -> 100
-                (op.skippedCount != 0 && op.steppedInCount == 0)
-                        || (op.skippedCount == 0 && op.steppedInCount != 0) -> 50
+                op.skippedCount != 0 || op.steppedInCount != 0 -> 50
                 else -> 0
             }
         }.average().toLong()

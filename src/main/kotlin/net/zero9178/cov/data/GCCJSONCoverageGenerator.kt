@@ -623,10 +623,9 @@ class GCCJSONCoverageGenerator(private val myGcov: String, private val myMajorVe
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
                     "gcov returned error code $retCode",
-                    "Invocation and error output:",
                     "Invocation: ${command.joinToString(" ")}\n Stderr: ${lines.joinToString("\n")}",
                     NotificationType.ERROR
-                ).notify(configuration.project)
+                ).setSubtitle("Invocation and error output:").notify(configuration.project)
             return null
         }
 
