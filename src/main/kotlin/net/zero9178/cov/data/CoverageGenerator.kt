@@ -1,6 +1,8 @@
 package net.zero9178.cov.data
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.process.CapturingProcessHandler
+import com.intellij.execution.wsl.WSLCommandLineOptions
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.util.io.exists
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration
@@ -9,7 +11,6 @@ import com.jetbrains.cidr.cpp.toolchains.CPPEnvironment
 import com.jetbrains.cidr.cpp.toolchains.WSL
 import com.jetbrains.cidr.execution.ConfigurationExtensionContext
 import java.nio.file.Paths
-import java.util.concurrent.TimeUnit
 
 interface CoverageGenerator {
     fun patchEnvironment(
@@ -50,21 +51,23 @@ fun createGeneratorFor(
     if (if (wsl == null) !Paths.get(executable).exists() else false) {
         return null to "Executable does not exist"
     }
-    val p = ProcessBuilder(
-        (if (wsl != null) listOf(wsl.homePath, "run") else emptyList()) + listOf(
-            executable,
-            "--version"
-        )
-    ).start()
-    val lines = p.inputStream.bufferedReader().readLines()
-    if (!p.waitFor(5, TimeUnit.SECONDS)) {
+
+    val commandLine = GeneralCommandLine(executable, "--version")
+    if (wsl != null) {
+        wsl.wslDistribution?.patchCommandLine(commandLine, null, WSLCommandLineOptions())
+    }
+
+    val output = CapturingProcessHandler(commandLine).runProcess(5000)
+    if (output.isTimeout) {
         return null to "Executable timed out"
     }
-    val retCode = p.exitValue()
+
+    val retCode = output.exitCode
     if (retCode != 0) {
-        val stderrOutput = p.errorStream.bufferedReader().readLines()
+        val stderrOutput = output.getStderrLines(false)
         return null to "Executable returned with error code $retCode and error output:\n ${stderrOutput.joinToString("\n")}"
     }
+    val lines = output.getStdoutLines(false)
     when {
         lines[0].contains("LLVM", true) -> {
             if (maybeOptionalLLVMProf == null) {

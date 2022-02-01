@@ -3,6 +3,8 @@ package net.zero9178.cov.data
 import com.github.h0tk3y.betterParse.combinators.*
 import com.github.h0tk3y.betterParse.grammar.Grammar
 import com.github.h0tk3y.betterParse.grammar.parseToEnd
+import com.github.h0tk3y.betterParse.lexer.literalToken
+import com.github.h0tk3y.betterParse.lexer.regexToken
 import com.github.h0tk3y.betterParse.parser.ParseException
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.notification.NotificationGroupManager
@@ -51,22 +53,22 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
         abstract class GCovCommonGrammar : Grammar<List<Item>>() {
 
             //Lexems
-            val num by token("\\d+")
-            val comma by token(",")
-            val colon by token(":")
-            val newLine by token("\n")
-            val ws by token("[ \t]+", ignore = true)
-            val file by token("file:.*")
-            val function by token("function:.*")
-            val version by token("version:.*\n", ignore = true)
+            val num by regexToken("\\d+")
+            val comma by literalToken(",")
+            val colon by literalToken(":")
+            val newLine by literalToken("\n")
+            val ws by regexToken("[ \t]+", ignore = true)
+            val file by regexToken("file:.*")
+            val function by regexToken("function:.*")
+            val version by regexToken("version:.*\n", ignore = true)
 
             //Keywords
-            val lcount by token("lcount")
-            val branch by token("branch")
-            val notexec by token("notexec")
-            val taken by token("taken")
-            val nottaken by token("nottaken")
-            val nonKeyword by token("[a-zA-Z_]\\w*")
+            val lcount by literalToken("lcount")
+            val branch by literalToken("branch")
+            val notexec by literalToken("notexec")
+            val taken by literalToken("taken")
+            val nottaken by literalToken("nottaken")
+            val nonKeyword by regexToken("[a-zA-Z_]\\w*")
 
             val word by nonKeyword or file or function or lcount or branch or notexec or nottaken
 
@@ -84,9 +86,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             val functionLine by function use {
                 object : Grammar<Item.Function>() {
 
-                    val num by token("\\d+")
-                    val comma by token(",")
-                    val rest by token(".*")
+                    val num by regexToken("\\d+")
+                    val comma by literalToken(",")
+                    val rest by regexToken(".*")
 
                     override val rootParser by num and -comma and num and -comma and rest map { (line, count, name) ->
                         Item.Function(line.text.toInt(), -1, count.text.toLong(), name.text)
@@ -109,9 +111,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             val functionLine by function use {
                 object : Grammar<Item.Function>() {
 
-                    val num by token("\\d+")
-                    val comma by token(",")
-                    val rest by token(".*")
+                    val num by regexToken("\\d+")
+                    val comma by literalToken(",")
+                    val rest by regexToken(".*")
 
                     override val rootParser by num and -comma and num and -comma and num and -comma and rest map { (startLine, endLine, count, name) ->
                         Item.Function(startLine.text.toInt(), endLine.text.toInt(), count.text.toLong(), name.text)
@@ -145,10 +147,9 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                                 .createNotification(
                                     "Error parsing gcov generated files",
-                                    "This is either due to a bug in the plugin or gcov",
                                     "Parser output:${e.errorResult}",
                                     NotificationType.ERROR
-                                ).notify(project)
+                                ).setSubtitle("This is either due to a bug in the plugin or gcov").notify(project)
                             emptyList()
                         }
                     }
@@ -239,7 +240,6 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
                     "gcov returned error code $retCode",
-                    "Invocation and error output:",
                     "Invocation: ${
                         (listOf(
                             myGcov,
@@ -248,7 +248,7 @@ class GCCGCDACoverageGenerator(private val myGcov: String, private val myMajorVe
                         ) + files).joinToString(" ")
                     }\n Stderr: $lines",
                     NotificationType.ERROR
-                ).notify(configuration.project)
+                ).setSubtitle("Invocation and error output:").notify(configuration.project)
             return null
         }
 

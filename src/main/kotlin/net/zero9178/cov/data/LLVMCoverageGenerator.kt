@@ -645,7 +645,7 @@ class LLVMCoverageGenerator(
                     }
                     val result = regions[conIndex]
                     if (removeRegions) {
-                        regions.removeAll(regions.slice(0..conIndex))
+                        regions.removeAll(regions.slice(0..conIndex).toSet())
                     }
                     return result
                 } catch (e: ProcessCanceledException) {
@@ -801,10 +801,9 @@ class LLVMCoverageGenerator(
             NotificationGroupManager.getInstance().getNotificationGroup("C/C++ Coverage Notification")
                 .createNotification(
                     "llvm-cov returned error code ${llvmCov.exitCode}",
-                    "Invocation and error output:",
                     "Invocation: ${input.joinToString(" ")}\n Stderr: ${llvmCov.stderr}",
                     NotificationType.ERROR
-                ).notify(configuration.project)
+                ).setSubtitle("Invocation and error output:").notify(configuration.project)
             return null
         }
         log.info("LLVM cov took ${System.nanoTime() - covStart}ns")

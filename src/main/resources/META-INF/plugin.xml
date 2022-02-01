@@ -13,10 +13,9 @@
     -->
 
     <change-notes><![CDATA[
-            2021.1.8: <br/>
+            2021.3.0-Eap: <br/>
       <ul>
-        <li>MASSIVELY improved performance of branch gathering by making better use of thread utilization, keeping it at
-            practically 100%.</li>
+        <li>EAP Build</li>
       </ul>
     ]]></change-notes>
 
