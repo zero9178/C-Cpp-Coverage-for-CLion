@@ -149,7 +149,12 @@ class CoverageHighlighter(private val myProject: Project) : Disposable {
         val functions: Map<String, HighlightFunction>,
         var active: String
     ) : Disposable {
-        override fun dispose() {}
+        var isDisposed = false
+            private set
+
+        override fun dispose() {
+            isDisposed = true
+        }
     }
 
     data class HighlightFunction(

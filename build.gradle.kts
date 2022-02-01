@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "net.zero9178"
-version = "2021.3.0-Eap"
+version = "2022.1.0-Eap"
 
 repositories {
     jcenter()
@@ -24,7 +24,7 @@ dependencies {
 
 // See https://github.com/JetBrains/gradle-intellij-plugin/
 intellij {
-    version.set("213.3714-EAP-CANDIDATE-SNAPSHOT")
+    version.set("221-EAP-SNAPSHOT")
     plugins.set(listOf("com.intellij.clion", "com.intellij.cidr.base", "com.intellij.cidr.lang", "clion-ctest"))
     type.set("CL")
 }

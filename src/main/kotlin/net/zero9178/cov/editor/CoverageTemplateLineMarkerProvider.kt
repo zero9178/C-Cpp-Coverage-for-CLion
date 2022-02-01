@@ -122,7 +122,7 @@ class CoverageTemplateLineMarkerProvider : LineMarkerProvider {
             val maxLength = group.functions.keys.maxOf { it.length }
             comboBox.prototypeDisplayValue = "".padStart(min(maxLength, MAX_COMBO_BOX_WIDTH), '0')
             comboBox.addActionListener {
-                if (Disposer.isDisposed(group)) {
+                if (group.isDisposed) {
                     return@addActionListener
                 }
                 highlighter.changeActive(group, comboBox.item)
