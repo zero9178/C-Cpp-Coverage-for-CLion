@@ -13,20 +13,13 @@
     -->
 
     <change-notes><![CDATA[
-      Build for 2022.2.1. <br/>
-<b>This plugin is on minimum support mode. If feasible, new builds for newer CLion versions will be published, but due
-to current lack of time and technical dept it may at one point not be possible to compile for newer CLion versions
-in the future.
-Thank you for support and understanding. </b>
+            2021.3.0-Eap: <br/>
+      <ul>
+        <li>EAP Build</li>
+      </ul>
     ]]></change-notes>
 
     <description><![CDATA[
-
-<b>This plugin is on minimum support mode. If feasible, new builds for newer CLion versions will be published, but due
-to current lack of time and technical dept it may at one point not be possible to compile for newer CLion versions
-in the future.
-Thank you for your support and understanding. </b> <br/>
-
 C and C++ Line, Region and Branch Coverage gatherer for GCC and Clang. Automatically gathers line, region and branch coverage
 and displays it in editor and a statistic window. To use compile with --coverage and link against gcov when using GCC or
 compile with -fprofile-instr-generate -fcoverage-mapping and use linker option -fprofile-instr-generate when using Clang.
